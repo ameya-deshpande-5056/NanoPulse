@@ -1,0 +1,312 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_call:
+    inputs:
+      version:
+        description: Release version override supplied by release workflow
+        required: false
+        type: string
+    secrets:
+      WINDOWS_CERTIFICATE_BASE64:
+        required: false
+      WINDOWS_CERTIFICATE_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  portable:
+    name: Portable ZIP
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Extract version
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_VERSION) {
+            $version = $env:RELEASE_VERSION.TrimStart('v')
+          } else {
+            $match = Select-String CMakeLists.txt -Pattern 'VERSION\s+(\d+\.\d+\.\d+)' | Select-Object -First 1
+            if (-not $match) { throw 'Version not found in CMakeLists.txt' }
+            $version = $match.Matches[0].Groups[1].Value
+          }
+          $match = [regex]::Match($version, '^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')
+          if (-not $match.Success) { throw "Invalid semantic version: $version" }
+          "VERSION=$version" | Out-File $env:GITHUB_ENV -Append
+          "PACKAGE_VERSION=$($match.Groups[1].Value)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: build-portable
+          key: windows-portable-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'src/**', 'third_party/**') }}
+          restore-keys: windows-portable-${{ runner.os }}-
+
+      - name: Build and deploy
+        shell: pwsh
+        run: |
+          cmake -S . -B build-portable -G "Visual Studio 17 2022" -A x64 `
+            "-DNANOPULSE_BUILD_VERSION=$env:VERSION"
+          cmake --build build-portable --config Release --parallel
+          cmake --install build-portable --config Release --prefix "$PWD/stage"
+          windeployqt --release --no-translations --compiler-runtime stage/bin/NanoPulse.exe
+          New-Item -ItemType Directory -Force "NanoPulse-portable" | Out-Null
+          Copy-Item stage/bin/* NanoPulse-portable -Recurse -Force
+          @"
+          [Paths]
+          Plugins=.
+          "@ | Set-Content NanoPulse-portable/qt.conf -Encoding Ascii
+          @"
+          NanoPulse $env:VERSION
+          Run NanoPulse.exe. No installation or external service is required.
+          "@ | Set-Content NanoPulse-portable/README.txt -Encoding UTF8
+          Compress-Archive NanoPulse-portable/* "NanoPulse-portable-x64-v$env:VERSION.zip" -Force
+          $hash = (Get-FileHash "NanoPulse-portable-x64-v$env:VERSION.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  NanoPulse-portable-x64-v$env:VERSION.zip" |
+            Set-Content "NanoPulse-portable-x64-v$env:VERSION.zip.sha256" -Encoding Ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-${{ env.VERSION }}
+          path: |
+            NanoPulse-portable-x64-v${{ env.VERSION }}.zip
+            NanoPulse-portable-x64-v${{ env.VERSION }}.zip.sha256
+          retention-days: 30
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-failure-logs
+          path: |
+            build-portable/CMakeFiles/CMakeConfigureLog.yaml
+            build-portable/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  nsis:
+    name: NSIS installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Extract version
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_VERSION) {
+            $version = $env:RELEASE_VERSION.TrimStart('v')
+          } else {
+            $match = Select-String CMakeLists.txt -Pattern 'VERSION\s+(\d+\.\d+\.\d+)' | Select-Object -First 1
+            if (-not $match) { throw 'Version not found in CMakeLists.txt' }
+            $version = $match.Matches[0].Groups[1].Value
+          }
+          $match = [regex]::Match($version, '^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')
+          if (-not $match.Success) { throw "Invalid semantic version: $version" }
+          "VERSION=$version" | Out-File $env:GITHUB_ENV -Append
+          "PACKAGE_VERSION=$($match.Groups[1].Value)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: build-nsis
+          key: windows-nsis-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'src/**', 'third_party/**', 'packaging/windows/NanoPulse.nsi') }}
+          restore-keys: windows-nsis-${{ runner.os }}-
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          cmake -S . -B build-nsis -G "Visual Studio 17 2022" -A x64 `
+            "-DNANOPULSE_BUILD_VERSION=$env:VERSION"
+          cmake --build build-nsis --config Release --parallel
+          cmake --install build-nsis --config Release --prefix "$PWD/stage-nsis"
+          windeployqt --release --no-translations --compiler-runtime stage-nsis/bin/NanoPulse.exe
+          $stage = (Resolve-Path stage-nsis/bin).Path
+          $output = "$PWD/NanoPulse-installer-x64-v$env:VERSION.exe"
+          & makensis.exe "/DVERSION=$env:VERSION" "/DSTAGE_DIR=$stage" `
+            "/DOUTPUT_FILE=$output" packaging/windows/NanoPulse.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS failed' }
+
+      - name: Detect signing credentials
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+        run: |
+          $value = if ($env:CERTIFICATE_BASE64) { 'true' } else { 'false' }
+          "SIGN_WINDOWS=$value" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Sign installer
+        if: env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\certificate.pfx",
+            [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+            /f "$env:RUNNER_TEMP\certificate.pfx" /p "$env:CERTIFICATE_PASSWORD" `
+            "NanoPulse-installer-x64-v$env:VERSION.exe"
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $file = "NanoPulse-installer-x64-v$env:VERSION.exe"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          "$hash  $file" | Set-Content "$file.sha256" -Encoding Ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-nsis-${{ env.VERSION }}
+          path: |
+            NanoPulse-installer-x64-v${{ env.VERSION }}.exe
+            NanoPulse-installer-x64-v${{ env.VERSION }}.exe.sha256
+          retention-days: 30
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-nsis-failure-logs
+          path: |
+            build-nsis/CMakeFiles/CMakeConfigureLog.yaml
+            build-nsis/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  msi:
+    name: MSI installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Install WiX
+        run: choco install wixtoolset -y --no-progress
+
+      - name: Extract version
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_VERSION) {
+            $version = $env:RELEASE_VERSION.TrimStart('v')
+          } else {
+            $match = Select-String CMakeLists.txt -Pattern 'VERSION\s+(\d+\.\d+\.\d+)' | Select-Object -First 1
+            if (-not $match) { throw 'Version not found in CMakeLists.txt' }
+            $version = $match.Matches[0].Groups[1].Value
+          }
+          $match = [regex]::Match($version, '^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')
+          if (-not $match.Success) { throw "Invalid semantic version: $version" }
+          "VERSION=$version" | Out-File $env:GITHUB_ENV -Append
+          "PACKAGE_VERSION=$($match.Groups[1].Value)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: build-msi
+          key: windows-msi-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'src/**', 'third_party/**', 'packaging/windows/NanoPulse.wxs') }}
+          restore-keys: windows-msi-${{ runner.os }}-
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          cmake -S . -B build-msi -G "Visual Studio 17 2022" -A x64 `
+            "-DNANOPULSE_BUILD_VERSION=$env:VERSION"
+          cmake --build build-msi --config Release --parallel
+          cmake --install build-msi --config Release --prefix "$PWD/stage-msi"
+          windeployqt --release --no-translations --compiler-runtime stage-msi/bin/NanoPulse.exe
+          $wixBin = (Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset v3*\bin" -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $wixBin) { throw 'WiX binaries not found' }
+          $stage = (Resolve-Path stage-msi/bin).Path
+          & "$wixBin\heat.exe" dir $stage -cg AppFiles -dr INSTALLFOLDER -srd -sreg -scom -gg `
+            -var var.StageDir -out Harvest.wxs
+          if ($LASTEXITCODE -ne 0) { throw 'WiX heat failed' }
+          New-Item -ItemType Directory -Force wixobj | Out-Null
+          & "$wixBin\candle.exe" -arch x64 "-dVersion=$env:PACKAGE_VERSION" "-dStageDir=$stage" `
+            -out wixobj/ packaging/windows/NanoPulse.wxs Harvest.wxs
+          if ($LASTEXITCODE -ne 0) { throw 'WiX candle failed' }
+          & "$wixBin\light.exe" -out "NanoPulse-installer-x64-v$env:VERSION.msi" `
+            wixobj/NanoPulse.wixobj wixobj/Harvest.wixobj
+          if ($LASTEXITCODE -ne 0) { throw 'WiX light failed' }
+
+      - name: Detect signing credentials
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+        run: |
+          $value = if ($env:CERTIFICATE_BASE64) { 'true' } else { 'false' }
+          "SIGN_WINDOWS=$value" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Sign MSI
+        if: env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\certificate.pfx",
+            [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+            /f "$env:RUNNER_TEMP\certificate.pfx" /p "$env:CERTIFICATE_PASSWORD" `
+            "NanoPulse-installer-x64-v$env:VERSION.msi"
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $file = "NanoPulse-installer-x64-v$env:VERSION.msi"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          "$hash  $file" | Set-Content "$file.sha256" -Encoding Ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi-${{ env.VERSION }}
+          path: |
+            NanoPulse-installer-x64-v${{ env.VERSION }}.msi
+            NanoPulse-installer-x64-v${{ env.VERSION }}.msi.sha256
+          retention-days: 30
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi-failure-logs
+          path: |
+            build-msi/CMakeFiles/CMakeConfigureLog.yaml
+            build-msi/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 30

@@ -1,0 +1,15 @@
+QWidget { background: #f8f9fa; color: #202124; }
+QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QTableWidget, QTreeWidget, QListWidget {
+  background: #ffffff; border: 1px solid #bdc1c6; padding: 4px; selection-background-color: #d2e3fc;
+}
+QPushButton { background: #f1f3f4; border: 1px solid #bdc1c6; padding: 5px 12px; }
+QPushButton:hover { background: #e8eaed; }
+QTabWidget::pane { border: 1px solid #bdc1c6; }
+QTabBar::tab { background: #f1f3f4; padding: 6px 12px; }
+QTabBar::tab:selected { background: #ffffff; }
+QHeaderView::section { background: #f1f3f4; padding: 4px; border: 0; }
+QMenuBar, QMenu, QStatusBar { background: #f8f9fa; }
+QSplitter::handle { background: #dadce0; }
+QLabel[responseClass="statusSuccess"] { color: #137333; }
+QLabel[responseClass="statusRedirect"] { color: #b06000; }
+QLabel[responseClass="statusError"] { color: #c5221f; }

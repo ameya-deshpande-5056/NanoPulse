@@ -1,0 +1,9 @@
+Package: nanopulse
+Version: 0.0.1
+Section: devel
+Priority: optional
+Architecture: amd64
+Maintainer: NanoPulse Maintainers
+Depends: libqt6core6, libqt6gui6, libqt6network6, libqt6sql6, libqt6widgets6, libqt6sql6-sqlite
+Description: Lightweight REST API testing desktop application
+ NanoPulse is a fast, offline Qt 6 desktop client for testing HTTP APIs.

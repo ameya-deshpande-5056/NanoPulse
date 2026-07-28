@@ -1,0 +1,22 @@
+app-id: com.example.NanoPulse
+runtime: org.kde.Platform
+runtime-version: "6.8"
+sdk: org.kde.Sdk
+command: NanoPulse
+finish-args:
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=host
+modules:
+  - name: nanopulse
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ..
+    post-install:
+      - install -Dm644 packaging/linux/com.example.NanoPulse.desktop /app/share/applications/com.example.NanoPulse.desktop
+      - install -Dm644 packaging/linux/com.example.NanoPulse.svg /app/share/icons/hicolor/scalable/apps/com.example.NanoPulse.svg

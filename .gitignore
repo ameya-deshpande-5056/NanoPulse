@@ -1,0 +1,40 @@
+# CMake and compiler output
+/build/
+/build-*/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# Generated packages and staging trees
+/dist/
+/portable/
+/stage*/
+/AppDir/
+/deb-root/
+/flatpak-build/
+/flatpak-repo/
+/.flatpak-builder/
+/NanoPulse-portable/
+/wixobj/
+/Harvest.wxs
+/*.AppImage
+/*.deb
+/*.flatpak
+/*.msi
+/*-installer-*.exe
+/*.zip
+/*.sha256
+/CHECKSUMS.txt
+/linuxdeploy*.AppImage
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db

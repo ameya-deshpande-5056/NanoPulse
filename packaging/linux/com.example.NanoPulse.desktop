@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NanoPulse
+Comment=Lightweight REST API testing client
+Exec=NanoPulse
+Icon=com.example.NanoPulse
+Terminal=false
+Categories=Development;Utility;

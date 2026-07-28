@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="NanoPulse" Language="1033" Version="$(var.Version)"
+           Manufacturer="NanoPulse"
+           UpgradeCode="B05B92E8-39D0-4C17-A618-B166C8B8132E">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer NanoPulse version is installed."/>
+    <MediaTemplate EmbedCab="yes"/>
+    <Feature Id="MainFeature" Title="NanoPulse" Level="1">
+      <ComponentGroupRef Id="AppFiles"/>
+      <ComponentRef Id="InstallRegistry"/>
+    </Feature>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="NanoPulse">
+          <Component Id="InstallRegistry" Guid="8DFB06DF-5704-4994-87BF-D48471CF414E">
+            <RegistryValue Root="HKLM" Key="Software\NanoPulse"
+                           Name="InstallDir" Type="string"
+                           Value="[INSTALLFOLDER]" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+  </Product>
+</Wix>

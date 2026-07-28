@@ -1,0 +1,229 @@
+name: Build Linux
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_call:
+    inputs:
+      version:
+        description: Release version override supplied by release workflow
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CCACHE_DIR: ~/.cache/ccache
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build ccache pkg-config dpkg-dev \
+            qt6-base-dev qt6-base-dev-tools libqt6sql6-sqlite libsqlite3-dev libfuse2 file
+
+      - name: Extract version
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(grep -A3 'project(NanoPulse' CMakeLists.txt | grep VERSION | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache compiler output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            build-appimage
+          key: linux-appimage-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'src/**', 'third_party/**') }}
+          restore-keys: linux-appimage-${{ runner.os }}-
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build-appimage -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNANOPULSE_BUILD_VERSION="$VERSION" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-appimage --config Release --parallel "$(nproc)"
+          cmake --install build-appimage --prefix "$PWD/AppDir/usr"
+          install -Dm644 packaging/linux/com.example.NanoPulse.desktop \
+            AppDir/usr/share/applications/com.example.NanoPulse.desktop
+          install -Dm644 packaging/linux/com.example.NanoPulse.svg \
+            AppDir/usr/share/icons/hicolor/scalable/apps/com.example.NanoPulse.svg
+
+      - name: Build AppImage
+        run: |
+          curl --fail --location --retry 3 --output linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl --fail --location --retry 3 --output linuxdeploy-plugin-qt-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+          export LINUXDEPLOY_PLUGIN_QT="$PWD/linuxdeploy-plugin-qt-x86_64.AppImage"
+          export QMAKE="$(command -v qmake6)"
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+          mkdir -p dist
+          GENERATED="$(find . -maxdepth 1 -type f -name '*.AppImage' ! -name 'linuxdeploy*' -print -quit)"
+          test -n "$GENERATED"
+          mv "$GENERATED" "dist/NanoPulse-x86_64-v${VERSION}.AppImage"
+          (cd dist && sha256sum "NanoPulse-x86_64-v${VERSION}.AppImage" \
+            > "NanoPulse-x86_64-v${VERSION}.AppImage.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage-${{ env.VERSION }}
+          path: dist/*
+          retention-days: 30
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage-failure-logs
+          path: |
+            build-appimage/CMakeFiles/CMakeConfigureLog.yaml
+            build-appimage/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  deb:
+    name: Debian package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build ccache pkg-config \
+            qt6-base-dev qt6-base-dev-tools libqt6sql6-sqlite libsqlite3-dev
+
+      - name: Extract version
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(grep -A3 'project(NanoPulse' CMakeLists.txt | grep VERSION | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache compiler output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            build-deb
+          key: linux-deb-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'src/**', 'third_party/**') }}
+          restore-keys: linux-deb-${{ runner.os }}-
+
+      - name: Build package tree
+        run: |
+          cmake -S . -B build-deb -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNANOPULSE_BUILD_VERSION="$VERSION" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-deb --config Release --parallel "$(nproc)"
+          cmake --install build-deb --prefix "$PWD/deb-root/usr"
+          install -Dm644 packaging/linux/com.example.NanoPulse.desktop \
+            deb-root/usr/share/applications/com.example.NanoPulse.desktop
+          install -Dm644 packaging/linux/com.example.NanoPulse.svg \
+            deb-root/usr/share/icons/hicolor/scalable/apps/com.example.NanoPulse.svg
+          install -Dm644 debian/control deb-root/DEBIAN/control
+          sed -i "s/^Version:.*/Version: $VERSION/" deb-root/DEBIAN/control
+          DEPENDS="$(dpkg-shlibdeps -O deb-root/usr/bin/NanoPulse | sed 's/^shlibs:Depends=//')"
+          SQLITE_PLUGIN="$(find /usr/lib -type f -name libqsqlite.so -print -quit)"
+          SQLITE_PACKAGE="$(dpkg-query -S "$SQLITE_PLUGIN" | head -1 | cut -d: -f1)"
+          sed -i "s/^Depends:.*/Depends: $DEPENDS, $SQLITE_PACKAGE/" deb-root/DEBIAN/control
+          mkdir -p deb-root/usr/share/doc/nanopulse
+          install -m644 debian/changelog debian/copyright \
+            deb-root/usr/share/doc/nanopulse/
+          mkdir -p dist
+          dpkg-deb --root-owner-group --build deb-root "dist/nanopulse_${VERSION}_amd64.deb"
+          (cd dist && sha256sum "nanopulse_${VERSION}_amd64.deb" \
+            > "nanopulse_${VERSION}_amd64.deb.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb-${{ env.VERSION }}
+          path: dist/*
+          retention-days: 30
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb-failure-logs
+          path: |
+            build-deb/CMakeFiles/CMakeConfigureLog.yaml
+            build-deb/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  flatpak:
+    name: Flatpak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Extract version
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(grep -A3 'project(NanoPulse' CMakeLists.txt | grep VERSION | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache Flatpak downloads
+        uses: actions/cache@v4
+        with:
+          path: .flatpak-builder/downloads
+          key: flatpak-${{ runner.os }}-${{ hashFiles('flatpak/com.example.NanoPulse.yaml', 'CMakeLists.txt', 'src/**') }}
+          restore-keys: flatpak-${{ runner.os }}-
+
+      - name: Build Flatpak bundle
+        run: |
+          sed -i "/- -DCMAKE_BUILD_TYPE=Release/a\\      - -DNANOPULSE_BUILD_VERSION=$VERSION" \
+            flatpak/com.example.NanoPulse.yaml
+          flatpak-builder --force-clean --install-deps-from=flathub \
+            --repo=flatpak-repo flatpak-build flatpak/com.example.NanoPulse.yaml
+          mkdir -p dist
+          flatpak build-bundle flatpak-repo "dist/com.example.NanoPulse-v${VERSION}.flatpak" \
+            com.example.NanoPulse
+          (cd dist && sha256sum "com.example.NanoPulse-v${VERSION}.flatpak" \
+            > "com.example.NanoPulse-v${VERSION}.flatpak.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-flatpak-${{ env.VERSION }}
+          path: dist/*
+          retention-days: 30
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-flatpak-failure-logs
+          path: |
+            .flatpak-builder/build/**/CMakeFiles/CMakeConfigureLog.yaml
+            .flatpak-builder/build/**/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 30
