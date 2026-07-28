@@ -3,6 +3,7 @@
 #include "../network/request.h"
 #include "../storage/sqlite_manager.h"
 
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -11,6 +12,7 @@
 #include <QJsonParseError>
 #include <QMap>
 #include <QSet>
+#include <QUrlQuery>
 
 #include <optional>
 
@@ -81,39 +83,141 @@ QJsonValue resolveReference(const QJsonObject &root, QJsonValue value) {
     return value;
 }
 
+std::optional<QJsonValue> namedExample(const QJsonObject &root,
+                                       QJsonValue examples,
+                                       bool allowRawObjects = false) {
+    if (examples.isArray())
+        return examples.toArray().isEmpty()
+            ? std::optional<QJsonValue>{}
+            : std::optional<QJsonValue>{examples.toArray().first()};
+    if (!examples.isObject())
+        return {};
+    for (auto it = examples.toObject().begin();
+         it != examples.toObject().end(); ++it) {
+        const auto example = resolveReference(root, it.value());
+        if (example.isObject()
+            && example.toObject().contains(QStringLiteral("value")))
+            return example.toObject().value(QStringLiteral("value"));
+        if ((!example.isObject() || allowRawObjects)
+            && !example.isUndefined() && !example.isNull())
+            return example;
+    }
+    return {};
+}
+
 std::optional<QJsonValue> schemaExample(const QJsonObject &root,
                                         QJsonValue schema, int depth = 0) {
     if (depth >= 32)
         return {};
-    schema = resolveReference(root, schema);
     if (!schema.isObject())
         return {};
-    const auto object = schema.toObject();
+    auto object = schema.toObject();
     if (object.contains(QStringLiteral("example")))
         return object.value(QStringLiteral("example"));
     if (object.contains(QStringLiteral("default")))
         return object.value(QStringLiteral("default"));
+    if (object.contains(QStringLiteral("const")))
+        return object.value(QStringLiteral("const"));
+    if (const auto example = namedExample(
+            root, object.value(QStringLiteral("examples"))))
+        return example;
+    if (object.contains(QStringLiteral("x-example")))
+        return object.value(QStringLiteral("x-example"));
+    if (const auto example = namedExample(
+            root, object.value(QStringLiteral("x-examples")), true))
+        return example;
+
+    schema = resolveReference(root, schema);
+    if (!schema.isObject())
+        return {};
+    object = schema.toObject();
+    if (object.contains(QStringLiteral("example")))
+        return object.value(QStringLiteral("example"));
+    if (object.contains(QStringLiteral("default")))
+        return object.value(QStringLiteral("default"));
+    if (object.contains(QStringLiteral("const")))
+        return object.value(QStringLiteral("const"));
+    if (const auto example = namedExample(
+            root, object.value(QStringLiteral("examples"))))
+        return example;
+    if (object.contains(QStringLiteral("x-example")))
+        return object.value(QStringLiteral("x-example"));
+    if (const auto example = namedExample(
+            root, object.value(QStringLiteral("x-examples")), true))
+        return example;
 
     const auto values = object.value(QStringLiteral("enum")).toArray();
     if (!values.isEmpty())
         return values.first();
 
+    QJsonObject combined;
+    for (const auto &part : object.value(QStringLiteral("allOf")).toArray()) {
+        const auto example = schemaExample(root, part, depth + 1);
+        if (!example)
+            continue;
+        if (!example->isObject())
+            return example;
+        const auto partObject = example->toObject();
+        for (auto it = partObject.begin(); it != partObject.end(); ++it)
+            combined.insert(it.key(), it.value());
+    }
     const auto properties = object.value(QStringLiteral("properties")).toObject();
     if (!properties.isEmpty()) {
-        QJsonObject result;
         for (auto it = properties.begin(); it != properties.end(); ++it) {
             const auto example = schemaExample(root, it.value(), depth + 1);
             if (example)
-                result.insert(it.key(), *example);
+                combined.insert(it.key(), *example);
         }
-        if (!result.isEmpty())
-            return result;
+    }
+    if (!combined.isEmpty())
+        return combined;
+
+    for (const auto key : {QStringLiteral("oneOf"), QStringLiteral("anyOf")}) {
+        for (const auto &part : object.value(key).toArray()) {
+            const auto example = schemaExample(root, part, depth + 1);
+            if (example)
+                return example;
+        }
     }
 
     const auto item = schemaExample(
         root, object.value(QStringLiteral("items")), depth + 1);
     if (item)
         return QJsonArray{*item};
+    const auto type = object.value(QStringLiteral("type")).toString();
+    if (type == QStringLiteral("array"))
+        return QJsonArray{};
+    if (type == QStringLiteral("object")) {
+        const auto additional = schemaExample(
+            root, object.value(QStringLiteral("additionalProperties")), depth + 1);
+        return additional ? QJsonObject{{QStringLiteral("additionalProp1"), *additional}}
+                          : QJsonObject{};
+    }
+    if (type == QStringLiteral("boolean"))
+        return true;
+    if (type == QStringLiteral("integer") || type == QStringLiteral("number")) {
+        const auto format = object.value(QStringLiteral("format"))
+                                .toString().toLower();
+        if (format == QStringLiteral("unix-time")
+            || format == QStringLiteral("unix-timestamp")
+            || format == QStringLiteral("timestamp"))
+            return static_cast<double>(QDateTime::currentSecsSinceEpoch());
+        return 0;
+    }
+    if (type == QStringLiteral("string")) {
+        const auto format = object.value(QStringLiteral("format"))
+                                .toString().toLower();
+        const auto now = QDateTime::currentDateTimeUtc();
+        if (format == QStringLiteral("date-time")
+            || format == QStringLiteral("datetime")
+            || format == QStringLiteral("timestamp"))
+            return now.toString(Qt::ISODateWithMs);
+        if (format == QStringLiteral("date"))
+            return now.date().toString(Qt::ISODate);
+        if (format == QStringLiteral("time"))
+            return now.time().toString(QStringLiteral("HH:mm:ss.zzz"));
+        return QStringLiteral("string");
+    }
     return {};
 }
 
@@ -126,18 +230,52 @@ std::optional<QJsonValue> mediaExample(const QJsonObject &root,
     if (media.contains(QStringLiteral("example")))
         return media.value(QStringLiteral("example"));
 
-    const auto examples = media.value(QStringLiteral("examples")).toObject();
-    for (auto it = examples.begin(); it != examples.end(); ++it) {
-        const auto example = resolveReference(root, it.value());
-        if (example.isObject()
-            && example.toObject().contains(QStringLiteral("value")))
-            return example.toObject().value(QStringLiteral("value"));
-    }
+    if (const auto example = namedExample(
+            root, media.value(QStringLiteral("examples"))))
+        return example;
+    if (media.contains(QStringLiteral("x-example")))
+        return media.value(QStringLiteral("x-example"));
+    if (const auto example = namedExample(
+            root, media.value(QStringLiteral("x-examples")), true))
+        return example;
     return schemaExample(root, media.value(QStringLiteral("schema")));
+}
+
+QString formValue(const QJsonValue &value) {
+    if (value.isString())
+        return value.toString();
+    if (value.isBool())
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    if (value.isDouble())
+        return QString::number(value.toDouble(), 'g', 15);
+    if (value.isNull())
+        return {};
+    if (value.isObject())
+        return QString::fromUtf8(
+            QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact));
+    return QString::fromUtf8(
+        QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact));
+}
+
+QByteArray formExample(const QJsonObject &example) {
+    QUrlQuery form;
+    for (auto it = example.begin(); it != example.end(); ++it) {
+        if (it.value().isArray()) {
+            for (const auto &item : it.value().toArray())
+                form.addQueryItem(it.key(), formValue(item));
+        } else {
+            form.addQueryItem(it.key(), formValue(it.value()));
+        }
+    }
+    return form.query(QUrl::FullyEncoded).toUtf8();
 }
 
 QByteArray encodeExample(const QJsonValue &example,
                          const QString &contentType) {
+    if (contentType.startsWith(
+            QStringLiteral("application/x-www-form-urlencoded"),
+            Qt::CaseInsensitive) && example.isObject())
+        return formExample(example.toObject());
     if (example.isObject())
         return QJsonDocument(example.toObject()).toJson(QJsonDocument::Indented);
     if (example.isArray())
@@ -202,7 +340,9 @@ ImportedBody swaggerBody(const QJsonObject &root,
             != QStringLiteral("body"))
             continue;
         std::optional<QJsonValue> example;
-        if (parameter.contains(QStringLiteral("x-example")))
+        if (parameter.contains(QStringLiteral("example")))
+            example = parameter.value(QStringLiteral("example"));
+        else if (parameter.contains(QStringLiteral("x-example")))
             example = parameter.value(QStringLiteral("x-example"));
         else
             example =
