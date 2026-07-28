@@ -1,5 +1,6 @@
 #include "request_panel.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QHeaderView>
@@ -77,8 +78,17 @@ RequestPanel::RequestPanel(QWidget *parent) : QWidget(parent) {
     m_body->setPlaceholderText(tr("Request body"));
     m_body->setLineWrapMode(QPlainTextEdit::NoWrap);
     new JsonHighlighter(m_body->document());
-    bodyLayout->addWidget(m_bodyType, 0, Qt::AlignLeft);
+    auto *bodyControls = new QHBoxLayout;
+    auto *wrap = new QCheckBox(tr("Wrap"), bodyPage);
+    bodyControls->addWidget(m_bodyType);
+    bodyControls->addStretch();
+    bodyControls->addWidget(wrap);
+    bodyLayout->addLayout(bodyControls);
     bodyLayout->addWidget(m_body);
+    connect(wrap, &QCheckBox::toggled, this, [this](bool enabled) {
+        m_body->setLineWrapMode(enabled ? QPlainTextEdit::WidgetWidth
+                                        : QPlainTextEdit::NoWrap);
+    });
 
     auto *authPage = new QWidget(tabs);
     auto *authLayout = new QFormLayout(authPage);

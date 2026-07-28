@@ -3,6 +3,7 @@
 #include "../utils/json_helper.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -22,10 +23,12 @@ ResponseViewer::ResponseViewer(QWidget *parent) : QWidget(parent) {
     m_time = new QLabel(tr("Time: —"), this);
     m_size = new QLabel(tr("Size: —"), this);
     auto *copy = new QPushButton(tr("Copy"), this);
+    auto *wrap = new QCheckBox(tr("Wrap"), this);
     summary->addWidget(m_status);
     summary->addWidget(m_time);
     summary->addWidget(m_size);
     summary->addStretch();
+    summary->addWidget(wrap);
     summary->addWidget(copy);
 
     auto *tabs = new QTabWidget(this);
@@ -69,6 +72,10 @@ ResponseViewer::ResponseViewer(QWidget *parent) : QWidget(parent) {
 
     connect(copy, &QPushButton::clicked, this, [this] {
         QApplication::clipboard()->setText(m_body->toPlainText());
+    });
+    connect(wrap, &QCheckBox::toggled, this, [this](bool enabled) {
+        m_body->setLineWrapMode(enabled ? QPlainTextEdit::WidgetWidth
+                                        : QPlainTextEdit::NoWrap);
     });
     connect(m_headerSearch, &QLineEdit::textChanged,
             this, &ResponseViewer::filterHeaders);

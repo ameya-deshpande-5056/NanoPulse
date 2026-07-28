@@ -19,7 +19,7 @@ set(CMAKE_AUTORCC ON)
 
 option(NANOPULSE_STATIC_QT "Use a statically built Qt installation" OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Sql Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Sql Widgets)
 
 qt_add_executable(NanoPulse
     src/main.cpp

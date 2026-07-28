@@ -180,7 +180,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
-          sudo flatpak remote-add --if-not-exists flathub \
+          flatpak --user remote-add --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
 
       - name: Extract version
@@ -203,7 +203,7 @@ jobs:
         run: |
           sed -i "/- -DCMAKE_BUILD_TYPE=Release/a\\      - -DNANOPULSE_BUILD_VERSION=$VERSION" \
             flatpak/com.example.NanoPulse.yaml
-          flatpak-builder --force-clean --install-deps-from=flathub \
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
             --repo=flatpak-repo flatpak-build flatpak/com.example.NanoPulse.yaml
           mkdir -p dist
           flatpak build-bundle flatpak-repo "dist/com.example.NanoPulse-v${VERSION}.flatpak" \

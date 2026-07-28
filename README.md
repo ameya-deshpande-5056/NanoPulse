@@ -4,7 +4,7 @@ Lightweight offline REST client for Windows and Linux, built with C++17 and Qt 6
 
 ## Build
 
-Requirements: Qt 6.5+ with Core, Gui, Network, Sql, Widgets, and the SQLite driver.
+Requirements: Qt 6.4+ with Core, Gui, Network, Sql, Widgets, and the SQLite driver.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
