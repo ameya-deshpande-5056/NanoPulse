@@ -141,10 +141,6 @@ jobs:
             deb-root/usr/share/icons/hicolor/scalable/apps/com.example.NanoPulse.svg
           install -Dm644 debian/control deb-root/DEBIAN/control
           sed -i "s/^Version:.*/Version: $VERSION/" deb-root/DEBIAN/control
-          DEPENDS="$(dpkg-shlibdeps -O deb-root/usr/bin/NanoPulse | sed 's/^shlibs:Depends=//')"
-          SQLITE_PLUGIN="$(find /usr/lib -type f -name libqsqlite.so -print -quit)"
-          SQLITE_PACKAGE="$(dpkg-query -S "$SQLITE_PLUGIN" | head -1 | cut -d: -f1)"
-          sed -i "s/^Depends:.*/Depends: $DEPENDS, $SQLITE_PACKAGE/" deb-root/DEBIAN/control
           mkdir -p deb-root/usr/share/doc/nanopulse
           install -m644 debian/changelog debian/copyright \
             deb-root/usr/share/doc/nanopulse/

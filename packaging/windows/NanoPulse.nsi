@@ -16,10 +16,11 @@ InstallDir "$PROGRAMFILES64\NanoPulse"
 InstallDirRegKey HKLM "Software\NanoPulse" "InstallDir"
 RequestExecutionLevel admin
 
+!define MUI_FINISHPAGE_RUN "$INSTDIR\NanoPulse.exe"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!insertmacro MUI_FINISHPAGE_RUN "$INSTDIR\NanoPulse.exe"
+!insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
 
 Section "NanoPulse" SEC_MAIN
