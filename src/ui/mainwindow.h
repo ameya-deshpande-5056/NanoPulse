@@ -4,6 +4,7 @@
 
 #include <QMainWindow>
 #include <QMap>
+#include <QVector>
 
 class ApiClient;
 class CollectionsSidebar;
@@ -12,6 +13,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QTabWidget;
 class RequestPanel;
 class ResponseViewer;
 class SettingsManager;
@@ -29,6 +31,23 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    struct RequestTab {
+        QWidget *page;
+        QComboBox *method;
+        QComboBox *url;
+        QComboBox *environment;
+        QSpinBox *timeout;
+        QPushButton *send;
+        QPushButton *cancel;
+        RequestPanel *requestPanel;
+        ResponseViewer *responseViewer;
+    };
+
+    RequestTab *addRequestTab(const ApiRequest &request = {});
+    RequestTab *currentRequestTab();
+    const RequestTab *currentRequestTab() const;
+    void closeRequestTab(int index);
+    void updateRequestTabTitle(QWidget *page);
     void sendRequest();
     void saveRequest(const QString &folderId = {});
     void loadRequest(const QString &id);
@@ -53,14 +72,11 @@ private:
     SettingsManager *m_settings;
     ApiClient *m_client;
     CollectionsSidebar *m_sidebar;
-    QComboBox *m_method;
-    QComboBox *m_url;
-    QComboBox *m_environment;
-    QSpinBox *m_timeout;
-    QPushButton *m_send;
-    QPushButton *m_cancel;
-    RequestPanel *m_requestPanel;
-    ResponseViewer *m_responseViewer;
+    QTabWidget *m_requestTabs;
+    QVector<RequestTab> m_requestTabData;
+    ResponseViewer *m_activeResponseViewer = nullptr;
+    QPushButton *m_activeSend = nullptr;
+    QPushButton *m_activeCancel = nullptr;
     QLabel *m_memory;
     ApiRequest m_lastSent;
     QByteArray m_lightStyle;

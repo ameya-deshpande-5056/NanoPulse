@@ -1,4 +1,5 @@
 #include "response_viewer.h"
+#include "text_search_bar.h"
 
 #include "../utils/json_helper.h"
 
@@ -6,12 +7,10 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QShortcut>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -23,19 +22,27 @@ ResponseViewer::ResponseViewer(QWidget *parent) : QWidget(parent) {
     m_time = new QLabel(tr("Time: —"), this);
     m_size = new QLabel(tr("Size: —"), this);
     auto *copy = new QPushButton(tr("Copy"), this);
+    auto *find = new QPushButton(tr("Find"), this);
     auto *wrap = new QCheckBox(tr("Wrap"), this);
     summary->addWidget(m_status);
     summary->addWidget(m_time);
     summary->addWidget(m_size);
     summary->addStretch();
     summary->addWidget(wrap);
+    summary->addWidget(find);
     summary->addWidget(copy);
 
     auto *tabs = new QTabWidget(this);
-    m_body = new QPlainTextEdit(tabs);
+    auto *bodyPage = new QWidget(tabs);
+    m_body = new QPlainTextEdit(bodyPage);
     m_body->setReadOnly(true);
     m_body->setLineWrapMode(QPlainTextEdit::NoWrap);
-    tabs->addTab(m_body, tr("Body"));
+    auto *search = new TextSearchBar(m_body, false, bodyPage);
+    auto *bodyLayout = new QVBoxLayout;
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->addWidget(m_body);
+    bodyPage->setLayout(bodyLayout);
+    tabs->addTab(bodyPage, tr("Body"));
 
     auto *headersPage = new QWidget(tabs);
     auto *headersLayout = new QVBoxLayout(headersPage);
@@ -77,16 +84,10 @@ ResponseViewer::ResponseViewer(QWidget *parent) : QWidget(parent) {
         m_body->setLineWrapMode(enabled ? QPlainTextEdit::WidgetWidth
                                         : QPlainTextEdit::NoWrap);
     });
+    connect(find, &QPushButton::clicked, search,
+            [search] { search->showFind(); });
     connect(m_headerSearch, &QLineEdit::textChanged,
             this, &ResponseViewer::filterHeaders);
-    auto *findShortcut = new QShortcut(QKeySequence::Find, m_body);
-    connect(findShortcut, &QShortcut::activated, this, [this] {
-        bool accepted = false;
-        const auto text = QInputDialog::getText(
-            this, tr("Find"), tr("Text:"), QLineEdit::Normal, {}, &accepted);
-        if (accepted && !text.isEmpty())
-            m_body->find(text);
-    });
 }
 
 void ResponseViewer::begin() {

@@ -36,7 +36,9 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTimer>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -59,47 +61,18 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
     m_client = new ApiClient(this);
     m_sidebar = new CollectionsSidebar(storage, this);
     m_sidebar->setMinimumWidth(210);
-    m_method = new QComboBox(this);
-    m_method->addItems({QStringLiteral("GET"), QStringLiteral("POST"),
-                        QStringLiteral("PUT"), QStringLiteral("PATCH"),
-                        QStringLiteral("DELETE"), QStringLiteral("HEAD"),
-                        QStringLiteral("OPTIONS")});
-    m_url = new QComboBox(this);
-    m_url->setEditable(true);
-    m_url->setInsertPolicy(QComboBox::InsertAtTop);
-    m_url->setMaxCount(20);
-    m_url->lineEdit()->setPlaceholderText(tr("https://api.example.com/resource"));
-    m_environment = new QComboBox(this);
-    m_timeout = new QSpinBox(this);
-    m_timeout->setRange(1, 600);
-    m_timeout->setValue(30);
-    m_timeout->setSuffix(tr(" s"));
-    m_send = new QPushButton(tr("Send"), this);
-    m_cancel = new QPushButton(tr("Cancel"), this);
-    m_cancel->setEnabled(false);
-    m_requestPanel = new RequestPanel(this);
-    m_responseViewer = new ResponseViewer(this);
-
-    auto *topBar = new QHBoxLayout;
-    topBar->addWidget(m_method);
-    topBar->addWidget(m_url, 1);
-    topBar->addWidget(new QLabel(tr("Timeout:"), this));
-    topBar->addWidget(m_timeout);
-    topBar->addWidget(m_environment);
-    topBar->addWidget(m_send);
-    topBar->addWidget(m_cancel);
-    auto *vertical = new QSplitter(Qt::Vertical, this);
-    vertical->addWidget(m_requestPanel);
-    vertical->addWidget(m_responseViewer);
-    vertical->setStretchFactor(0, 1);
-    vertical->setStretchFactor(1, 1);
-    auto *right = new QWidget(this);
-    auto *rightLayout = new QVBoxLayout(right);
-    rightLayout->addLayout(topBar);
-    rightLayout->addWidget(vertical);
+    m_requestTabs = new QTabWidget(this);
+    m_requestTabs->setTabsClosable(true);
+    m_requestTabs->setMovable(true);
+    m_requestTabs->setDocumentMode(true);
+    auto *newTab = new QToolButton(m_requestTabs);
+    newTab->setText(QStringLiteral("+"));
+    newTab->setToolTip(tr("New request tab"));
+    m_requestTabs->setCornerWidget(newTab, Qt::TopRightCorner);
+    addRequestTab();
     auto *mainSplitter = new QSplitter(Qt::Horizontal, this);
     mainSplitter->addWidget(m_sidebar);
-    mainSplitter->addWidget(right);
+    mainSplitter->addWidget(m_requestTabs);
     mainSplitter->setStretchFactor(1, 1);
     setCentralWidget(mainSplitter);
 
@@ -126,21 +99,35 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
     m_memory = new QLabel(this);
     statusBar()->addPermanentWidget(m_memory);
 
-    connect(m_send, &QPushButton::clicked, this, &MainWindow::sendRequest);
-    connect(m_cancel, &QPushButton::clicked, m_client, &ApiClient::cancel);
+    connect(newTab, &QToolButton::clicked, this,
+            [this] { addRequestTab(); });
+    connect(m_requestTabs, &QTabWidget::tabCloseRequested,
+            this, &MainWindow::closeRequestTab);
     connect(m_client, &ApiClient::started, this, [this] {
-        m_send->setEnabled(false);
-        m_cancel->setEnabled(true);
-        m_responseViewer->begin();
+        if (m_activeSend)
+            m_activeSend->setEnabled(false);
+        if (m_activeCancel)
+            m_activeCancel->setEnabled(true);
+        if (m_activeResponseViewer)
+            m_activeResponseViewer->begin();
     });
-    connect(m_client, &ApiClient::chunkReceived,
-            m_responseViewer, &ResponseViewer::appendChunk);
+    connect(m_client, &ApiClient::chunkReceived, this,
+            [this](const QByteArray &chunk) {
+                if (m_activeResponseViewer)
+                    m_activeResponseViewer->appendChunk(chunk);
+            });
     connect(m_client, &ApiClient::completed, this,
             [this](int status, const QList<QPair<QByteArray, QByteArray>> &headers,
                    qint64 elapsed, qint64 bytes, const QString &error) {
-        m_send->setEnabled(true);
-        m_cancel->setEnabled(false);
-        m_responseViewer->finish(status, headers, elapsed, bytes, error);
+        if (m_activeSend)
+            m_activeSend->setEnabled(true);
+        if (m_activeCancel)
+            m_activeCancel->setEnabled(false);
+        if (m_activeResponseViewer)
+            m_activeResponseViewer->finish(status, headers, elapsed, bytes, error);
+        m_activeSend = nullptr;
+        m_activeCancel = nullptr;
+        m_activeResponseViewer = nullptr;
         m_storage->addHistory(m_lastSent, status, elapsed, m_historyLimit);
         m_sidebar->refreshHistory();
     });
@@ -148,8 +135,10 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
             this, &MainWindow::loadRequest);
     connect(m_sidebar, &CollectionsSidebar::historySelected, this,
             [this](const QString &method, const QString &url) {
-        m_method->setCurrentText(method);
-        m_url->setCurrentText(url);
+        if (auto *tab = currentRequestTab()) {
+            tab->method->setCurrentText(method);
+            tab->url->setCurrentText(url);
+        }
     });
     connect(m_sidebar, &CollectionsSidebar::saveCurrentRequested,
             this, &MainWindow::saveRequest);
@@ -189,8 +178,10 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
     auto *sendShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return), this);
     connect(sendShortcut, &QShortcut::activated, this, &MainWindow::sendRequest);
     auto *urlShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), this);
-    connect(urlShortcut, &QShortcut::activated, m_url->lineEdit(),
-            qOverload<>(&QWidget::setFocus));
+    connect(urlShortcut, &QShortcut::activated, this, [this] {
+        if (auto *tab = currentRequestTab())
+            tab->url->lineEdit()->setFocus();
+    });
 
     QFile dark(QStringLiteral(":/style.qss"));
     if (dark.open(QIODevice::ReadOnly))
@@ -201,8 +192,8 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
     loadEnvironments();
     restoreSettings();
     for (const auto &item : m_storage->history(20))
-        if (m_url->findText(item.url) < 0)
-            m_url->addItem(item.url);
+        if (auto *tab = currentRequestTab(); tab->url->findText(item.url) < 0)
+            tab->url->addItem(item.url);
     QTimer::singleShot(0, this, [this] {
         updateMemoryUsage();
         auto *timer = new QTimer(this);
@@ -213,8 +204,121 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
 
 MainWindow::~MainWindow() = default;
 
+MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
+    RequestTab tab{};
+    tab.page = new QWidget(m_requestTabs);
+    tab.method = new QComboBox(tab.page);
+    tab.method->addItems({QStringLiteral("GET"), QStringLiteral("POST"),
+                          QStringLiteral("PUT"), QStringLiteral("PATCH"),
+                          QStringLiteral("DELETE"), QStringLiteral("HEAD"),
+                          QStringLiteral("OPTIONS")});
+    tab.url = new QComboBox(tab.page);
+    tab.url->setEditable(true);
+    tab.url->setInsertPolicy(QComboBox::InsertAtTop);
+    tab.url->setMaxCount(20);
+    tab.url->lineEdit()->setPlaceholderText(
+        tr("https://api.example.com/resource"));
+    tab.environment = new QComboBox(tab.page);
+    tab.timeout = new QSpinBox(tab.page);
+    tab.timeout->setRange(1, 600);
+    tab.timeout->setValue(30);
+    tab.timeout->setSuffix(tr(" s"));
+    tab.send = new QPushButton(tr("Send"), tab.page);
+    tab.cancel = new QPushButton(tr("Cancel"), tab.page);
+    tab.cancel->setEnabled(false);
+    tab.requestPanel = new RequestPanel(tab.page);
+    tab.responseViewer = new ResponseViewer(tab.page);
+
+    auto *topBar = new QHBoxLayout;
+    topBar->addWidget(tab.method);
+    topBar->addWidget(tab.url, 1);
+    topBar->addWidget(new QLabel(tr("Timeout:"), tab.page));
+    topBar->addWidget(tab.timeout);
+    topBar->addWidget(tab.environment);
+    topBar->addWidget(tab.send);
+    topBar->addWidget(tab.cancel);
+    auto *vertical = new QSplitter(Qt::Vertical, tab.page);
+    vertical->addWidget(tab.requestPanel);
+    vertical->addWidget(tab.responseViewer);
+    vertical->setStretchFactor(0, 1);
+    vertical->setStretchFactor(1, 1);
+    auto *layout = new QVBoxLayout(tab.page);
+    layout->addLayout(topBar);
+    layout->addWidget(vertical);
+
+    m_requestTabData.append(tab);
+    const int index = m_requestTabs->addTab(tab.page, tr("New Request"));
+    m_requestTabs->setCurrentIndex(index);
+    connect(tab.send, &QPushButton::clicked, this, [this, page = tab.page] {
+        m_requestTabs->setCurrentWidget(page);
+        sendRequest();
+    });
+    connect(tab.cancel, &QPushButton::clicked, m_client, &ApiClient::cancel);
+    connect(tab.method, &QComboBox::currentTextChanged, this,
+            [this, page = tab.page] { updateRequestTabTitle(page); });
+    connect(tab.url->lineEdit(), &QLineEdit::textChanged, this,
+            [this, page = tab.page] { updateRequestTabTitle(page); });
+
+    tab.method->setCurrentText(request.method.isEmpty() ? QStringLiteral("GET")
+                                                        : request.method);
+    tab.url->setCurrentText(request.url);
+    tab.requestPanel->setRequest(request);
+    loadEnvironments();
+    updateRequestTabTitle(tab.page);
+    return &m_requestTabData.last();
+}
+
+MainWindow::RequestTab *MainWindow::currentRequestTab() {
+    const int index = m_requestTabs->currentIndex();
+    return index >= 0 && index < m_requestTabData.size()
+        ? &m_requestTabData[index] : nullptr;
+}
+
+const MainWindow::RequestTab *MainWindow::currentRequestTab() const {
+    const int index = m_requestTabs->currentIndex();
+    return index >= 0 && index < m_requestTabData.size()
+        ? &m_requestTabData.at(index) : nullptr;
+}
+
+void MainWindow::closeRequestTab(int index) {
+    if (index < 0 || index >= m_requestTabData.size())
+        return;
+    const auto &tab = m_requestTabData.at(index);
+    if (tab.responseViewer == m_activeResponseViewer) {
+        statusBar()->showMessage(tr("Wait for the request to finish before closing its tab."),
+                                 3000);
+        return;
+    }
+    if (m_requestTabData.size() == 1) {
+        tab.method->setCurrentText(QStringLiteral("GET"));
+        tab.url->clear();
+        tab.requestPanel->setRequest({});
+        tab.responseViewer->begin();
+        updateRequestTabTitle(tab.page);
+        return;
+    }
+    auto *page = tab.page;
+    m_requestTabs->removeTab(index);
+    m_requestTabData.removeAt(index);
+    page->deleteLater();
+}
+
+void MainWindow::updateRequestTabTitle(QWidget *page) {
+    const int index = m_requestTabs->indexOf(page);
+    if (index < 0)
+        return;
+    const auto &tab = m_requestTabData.at(index);
+    const auto url = tab.url->currentText().trimmed();
+    m_requestTabs->setTabText(
+        index, url.isEmpty() ? tr("New Request")
+                             : QStringLiteral("%1 %2").arg(tab.method->currentText(), url));
+}
+
 void MainWindow::sendRequest() {
     if (m_client->busy())
+        return;
+    auto *tab = currentRequestTab();
+    if (!tab)
         return;
     m_lastSent = currentRequest(true);
     if (!QUrl(m_lastSent.resolvedUrl()).isValid()
@@ -222,16 +326,22 @@ void MainWindow::sendRequest() {
         QMessageBox::warning(this, tr("Invalid URL"), tr("Enter a valid URL."));
         return;
     }
-    if (m_url->findText(m_url->currentText()) < 0)
-        m_url->insertItem(0, m_url->currentText());
+    if (tab->url->findText(tab->url->currentText()) < 0)
+        tab->url->insertItem(0, tab->url->currentText());
+    m_activeResponseViewer = tab->responseViewer;
+    m_activeSend = tab->send;
+    m_activeCancel = tab->cancel;
     m_client->send(m_lastSent);
 }
 
 ApiRequest MainWindow::currentRequest(bool substitute) const {
-    auto request = m_requestPanel->request();
-    request.method = m_method->currentText();
-    request.url = m_url->currentText();
-    request.timeoutMs = m_timeout->value() * 1000;
+    const auto *tab = currentRequestTab();
+    if (!tab)
+        return {};
+    auto request = tab->requestPanel->request();
+    request.method = tab->method->currentText();
+    request.url = tab->url->currentText();
+    request.timeoutMs = tab->timeout->value() * 1000;
     if (!substitute)
         return request;
     const auto variables = activeVariables();
@@ -261,25 +371,29 @@ void MainWindow::saveRequest(const QString &folderId) {
 
 void MainWindow::loadRequest(const QString &id) {
     const auto request = m_storage->request(id);
-    m_method->setCurrentText(request.method);
-    m_url->setCurrentText(request.url);
-    m_requestPanel->setRequest(request);
+    addRequestTab(request);
 }
 
 void MainWindow::loadEnvironments() {
-    const auto selected = m_environment->currentText();
-    m_environment->clear();
-    m_environment->addItem(tr("No environment"));
-    for (const auto &environment : m_storage->environments())
-        m_environment->addItem(environment.first);
-    const auto index = m_environment->findText(selected);
-    if (index >= 0)
-        m_environment->setCurrentIndex(index);
+    const auto environments = m_storage->environments();
+    for (auto &tab : m_requestTabData) {
+        const auto selected = tab.environment->currentText();
+        tab.environment->clear();
+        tab.environment->addItem(tr("No environment"));
+        for (const auto &environment : environments)
+            tab.environment->addItem(environment.first);
+        const auto index = tab.environment->findText(selected);
+        if (index >= 0)
+            tab.environment->setCurrentIndex(index);
+    }
 }
 
 QMap<QString, QString> MainWindow::activeVariables() const {
+    const auto *tab = currentRequestTab();
+    if (!tab)
+        return {};
     for (const auto &environment : m_storage->environments())
-        if (environment.first == m_environment->currentText())
+        if (environment.first == tab->environment->currentText())
             return environment.second;
     return {};
 }
@@ -475,7 +589,8 @@ void MainWindow::saveResponse() {
         return;
     QFile file(path);
     if (file.open(QIODevice::WriteOnly))
-        file.write(m_responseViewer->responseData());
+        if (const auto *tab = currentRequestTab())
+            file.write(tab->responseViewer->responseData());
 }
 
 void MainWindow::exportCurl() {
@@ -525,14 +640,19 @@ void MainWindow::restoreSettings() {
     if (settings.value(QStringLiteral("window_geometry")).isString())
         restoreGeometry(QByteArray::fromBase64(
             settings.value(QStringLiteral("window_geometry")).toString().toLatin1()));
-    m_url->setCurrentText(settings.value(QStringLiteral("last_url")).toString());
-    m_timeout->setValue(settings.value(QStringLiteral("timeout_seconds")).toInt(30));
+    if (auto *tab = currentRequestTab()) {
+        tab->url->setCurrentText(settings.value(QStringLiteral("last_url")).toString());
+        tab->timeout->setValue(
+            settings.value(QStringLiteral("timeout_seconds")).toInt(30));
+    }
     m_historyLimit = settings.value(QStringLiteral("history_limit")).toInt(50);
     m_historyLimit = qBound(1, m_historyLimit, 50);
     const auto active = settings.value(QStringLiteral("active_environment")).toString();
-    const auto index = m_environment->findText(active);
-    if (index >= 0)
-        m_environment->setCurrentIndex(index);
+    if (auto *tab = currentRequestTab()) {
+        const auto index = tab->environment->findText(active);
+        if (index >= 0)
+            tab->environment->setCurrentIndex(index);
+    }
 }
 
 void MainWindow::persistSettings() {
@@ -540,12 +660,14 @@ void MainWindow::persistSettings() {
     settings.insert(QStringLiteral("theme"),
                     qApp->styleSheet() == QString::fromUtf8(m_darkStyle)
                         ? QStringLiteral("dark") : QStringLiteral("light"));
-    settings.insert(QStringLiteral("active_environment"),
-                    m_environment->currentText());
+    if (const auto *tab = currentRequestTab()) {
+        settings.insert(QStringLiteral("active_environment"),
+                        tab->environment->currentText());
+        settings.insert(QStringLiteral("last_url"), tab->url->currentText());
+        settings.insert(QStringLiteral("timeout_seconds"), tab->timeout->value());
+    }
     settings.insert(QStringLiteral("window_geometry"),
                     QString::fromLatin1(saveGeometry().toBase64()));
-    settings.insert(QStringLiteral("last_url"), m_url->currentText());
-    settings.insert(QStringLiteral("timeout_seconds"), m_timeout->value());
     settings.insert(QStringLiteral("history_limit"), m_historyLimit);
     m_settings->save(settings);
 }

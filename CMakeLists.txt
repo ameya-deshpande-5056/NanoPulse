@@ -26,6 +26,7 @@ qt_add_executable(NanoPulse
     src/ui/mainwindow.h src/ui/mainwindow.cpp
     src/ui/request_panel.h src/ui/request_panel.cpp
     src/ui/response_viewer.h src/ui/response_viewer.cpp
+    src/ui/text_search_bar.h src/ui/text_search_bar.cpp
     src/ui/collections_sidebar.h src/ui/collections_sidebar.cpp
     src/ui/environment_manager.h src/ui/environment_manager.cpp
     src/network/api_client.h src/network/api_client.cpp

@@ -1,4 +1,5 @@
 #include "request_panel.h"
+#include "text_search_bar.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -8,6 +9,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QTabWidget>
@@ -80,15 +82,20 @@ RequestPanel::RequestPanel(QWidget *parent) : QWidget(parent) {
     new JsonHighlighter(m_body->document());
     auto *bodyControls = new QHBoxLayout;
     auto *wrap = new QCheckBox(tr("Wrap"), bodyPage);
+    auto *find = new QPushButton(tr("Find"), bodyPage);
     bodyControls->addWidget(m_bodyType);
     bodyControls->addStretch();
+    bodyControls->addWidget(find);
     bodyControls->addWidget(wrap);
     bodyLayout->addLayout(bodyControls);
+    auto *search = new TextSearchBar(m_body, true, bodyPage);
     bodyLayout->addWidget(m_body);
     connect(wrap, &QCheckBox::toggled, this, [this](bool enabled) {
         m_body->setLineWrapMode(enabled ? QPlainTextEdit::WidgetWidth
                                         : QPlainTextEdit::NoWrap);
     });
+    connect(find, &QPushButton::clicked, search,
+            [search] { search->showFind(); });
 
     auto *authPage = new QWidget(tabs);
     auto *authLayout = new QFormLayout(authPage);
