@@ -2,5 +2,6 @@
   <qresource prefix="/">
     <file alias="style.qss">style.qss</file>
     <file alias="style-light.qss">style-light.qss</file>
+    <file alias="app-icon.svg">../../packaging/linux/com.example.NanoPulse.svg</file>
   </qresource>
 </RCC>

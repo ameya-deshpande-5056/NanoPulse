@@ -2,13 +2,19 @@
 
 #include "../storage/sqlite_manager.h"
 
+#include <QAbstractItemView>
 #include <QComboBox>
+#include <QEvent>
+#include <QHelpEvent>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QStyle>
+#include <QStyleOptionComboBox>
+#include <QToolTip>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -25,8 +31,11 @@ CollectionsSidebar::CollectionsSidebar(SqliteManager *storage, QWidget *parent)
     m_tree = new QTreeWidget(this);
     m_tree->setHeaderHidden(true);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_tree->viewport()->installEventFilter(this);
     m_history = new QComboBox(this);
     m_history->setPlaceholderText(tr("Recent requests"));
+    m_history->installEventFilter(this);
+    m_history->view()->viewport()->installEventFilter(this);
     auto *clearHistory = new QPushButton(tr("Clear history"), this);
 
     auto *layout = new QVBoxLayout(this);
@@ -57,9 +66,14 @@ CollectionsSidebar::CollectionsSidebar(SqliteManager *storage, QWidget *parent)
         }
     });
     connect(m_history, &QComboBox::activated, this, [this](int index) {
-        if (index >= 0)
+        if (index >= 0) {
+            m_history->setProperty(
+                "requestMethod", m_history->itemData(index, Qt::UserRole));
+            m_history->style()->unpolish(m_history);
+            m_history->style()->polish(m_history);
             emit historySelected(m_history->itemData(index, Qt::UserRole).toString(),
                                  m_history->itemData(index, Qt::UserRole + 1).toString());
+        }
     });
     connect(clearHistory, &QPushButton::clicked, this, [this] {
         m_storage->clearHistory();
@@ -84,6 +98,53 @@ void CollectionsSidebar::refreshHistory() {
         m_history->setItemData(index, item.method, Qt::UserRole);
         m_history->setItemData(index, item.url, Qt::UserRole + 1);
     }
+    if (m_history->count() > 0) {
+        m_history->setProperty(
+            "requestMethod", m_history->itemData(0, Qt::UserRole));
+        m_history->style()->unpolish(m_history);
+        m_history->style()->polish(m_history);
+    }
+}
+
+bool CollectionsSidebar::eventFilter(QObject *watched, QEvent *event) {
+    if (event->type() != QEvent::ToolTip)
+        return QWidget::eventFilter(watched, event);
+
+    auto *helpEvent = static_cast<QHelpEvent *>(event);
+    QString text;
+    int availableWidth = 0;
+    if (watched == m_tree->viewport()) {
+        const auto *item = m_tree->itemAt(helpEvent->pos());
+        if (item) {
+            const auto rect = m_tree->visualItemRect(item);
+            text = item->text(0);
+            availableWidth = m_tree->viewport()->width() - rect.x() - 4;
+        }
+    } else if (watched == m_history) {
+        QStyleOptionComboBox option;
+        option.initFrom(m_history);
+        option.currentText = m_history->currentText();
+        text = m_history->currentText();
+        availableWidth = m_history->style()
+                             ->subControlRect(QStyle::CC_ComboBox, &option,
+                                              QStyle::SC_ComboBoxEditField, m_history)
+                             .width();
+    } else if (watched == m_history->view()->viewport()) {
+        const auto index = m_history->view()->indexAt(helpEvent->pos());
+        if (index.isValid()) {
+            const auto rect = m_history->view()->visualRect(index);
+            text = index.data().toString();
+            availableWidth = m_history->view()->viewport()->width() - rect.x() - 4;
+        }
+    }
+
+    if (!text.isEmpty()
+        && fontMetrics().horizontalAdvance(text) > availableWidth) {
+        QToolTip::showText(helpEvent->globalPos(), text, this);
+        return true;
+    }
+    QToolTip::hideText();
+    return false;
 }
 
 void CollectionsSidebar::loadChildren(QTreeWidgetItem *parent) {

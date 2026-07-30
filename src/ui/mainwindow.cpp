@@ -11,6 +11,7 @@
 #include "../utils/variable_substitution.h"
 
 #include <QApplication>
+#include <QBrush>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QClipboard>
@@ -20,6 +21,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -36,6 +38,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -51,6 +54,26 @@
 
 namespace {
 constexpr qsizetype MaximumSwaggerDocumentSize = 64 * 1024 * 1024;
+
+void setRequestMethodOptionColors(QComboBox *combo, bool dark) {
+    const QList<QColor> colors = dark
+        ? QList<QColor>{QColor(QStringLiteral("#81c995")),
+                        QColor(QStringLiteral("#8ab4f8")),
+                        QColor(QStringLiteral("#fdd663")),
+                        QColor(QStringLiteral("#d7aefb")),
+                        QColor(QStringLiteral("#f28b82")),
+                        QColor(QStringLiteral("#bdc1c6")),
+                        QColor(QStringLiteral("#c58af9"))}
+        : QList<QColor>{QColor(QStringLiteral("#137333")),
+                        QColor(QStringLiteral("#1967d2")),
+                        QColor(QStringLiteral("#b06000")),
+                        QColor(QStringLiteral("#8430ce")),
+                        QColor(QStringLiteral("#c5221f")),
+                        QColor(QStringLiteral("#5f6368")),
+                        QColor(QStringLiteral("#7627bb"))};
+    for (int index = 0; index < combo->count(); ++index)
+        combo->setItemData(index, QBrush(colors.at(index)), Qt::ForegroundRole);
+}
 }
 
 MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
@@ -172,8 +195,16 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
         applyTheme(!light);
     });
     connect(aboutAction, &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("NanoPulse"),
-                           tr("A lightweight, offline REST client."));
+        QMessageBox about(this);
+        about.setWindowTitle(tr("About NanoPulse"));
+        about.setWindowIcon(QIcon(QStringLiteral(":/app-icon.svg")));
+        about.setIconPixmap(QIcon(QStringLiteral(":/app-icon.svg")).pixmap(64, 64));
+        about.setText(tr("NanoPulse"));
+        about.setInformativeText(
+            tr("A lightweight, offline REST client.<br><br>Version %1")
+                .arg(QApplication::applicationVersion()));
+        about.setStandardButtons(QMessageBox::Ok);
+        about.exec();
     });
     auto *sendShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return), this);
     connect(sendShortcut, &QShortcut::activated, this, &MainWindow::sendRequest);
@@ -212,6 +243,8 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
                           QStringLiteral("PUT"), QStringLiteral("PATCH"),
                           QStringLiteral("DELETE"), QStringLiteral("HEAD"),
                           QStringLiteral("OPTIONS")});
+    setRequestMethodOptionColors(tab.method, true);
+    tab.method->setProperty("requestMethod", tab.method->currentText());
     tab.url = new QComboBox(tab.page);
     tab.url->setEditable(true);
     tab.url->setInsertPolicy(QComboBox::InsertAtTop);
@@ -248,6 +281,9 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
 
     m_requestTabData.append(tab);
     const int index = m_requestTabs->addTab(tab.page, tr("New Request"));
+    auto *tabTitle = new QLabel(m_requestTabs);
+    tabTitle->setProperty("requestMethod", tab.method->currentText());
+    m_requestTabs->tabBar()->setTabButton(index, QTabBar::LeftSide, tabTitle);
     m_requestTabs->setCurrentIndex(index);
     connect(tab.send, &QPushButton::clicked, this, [this, page = tab.page] {
         m_requestTabs->setCurrentWidget(page);
@@ -255,7 +291,12 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
     });
     connect(tab.cancel, &QPushButton::clicked, m_client, &ApiClient::cancel);
     connect(tab.method, &QComboBox::currentTextChanged, this,
-            [this, page = tab.page] { updateRequestTabTitle(page); });
+            [this, page = tab.page, method = tab.method](const QString &value) {
+        method->setProperty("requestMethod", value);
+        method->style()->unpolish(method);
+        method->style()->polish(method);
+        updateRequestTabTitle(page);
+    });
     connect(tab.url->lineEdit(), &QLineEdit::textChanged, this,
             [this, page = tab.page] { updateRequestTabTitle(page); });
 
@@ -309,9 +350,18 @@ void MainWindow::updateRequestTabTitle(QWidget *page) {
         return;
     const auto &tab = m_requestTabData.at(index);
     const auto url = tab.url->currentText().trimmed();
-    m_requestTabs->setTabText(
-        index, url.isEmpty() ? tr("New Request")
-                             : QStringLiteral("%1 %2").arg(tab.method->currentText(), url));
+    auto *title = qobject_cast<QLabel *>(
+        m_requestTabs->tabBar()->tabButton(index, QTabBar::LeftSide));
+    if (!title)
+        return;
+    title->setProperty("requestMethod", tab.method->currentText());
+    title->style()->unpolish(title);
+    title->style()->polish(title);
+    const auto text = url.isEmpty()
+        ? tr("New Request")
+        : QStringLiteral("%1 %2").arg(tab.method->currentText(), url);
+    title->setText(text);
+    m_requestTabs->setTabToolTip(index, text);
 }
 
 void MainWindow::sendRequest() {
@@ -613,6 +663,8 @@ void MainWindow::exportCurl() {
 
 void MainWindow::applyTheme(bool dark) {
     qApp->setStyleSheet(QString::fromUtf8(dark ? m_darkStyle : m_lightStyle));
+    for (const auto &tab : m_requestTabData)
+        setRequestMethodOptionColors(tab.method, dark);
 }
 
 void MainWindow::updateMemoryUsage() {

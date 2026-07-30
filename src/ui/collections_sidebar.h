@@ -20,6 +20,9 @@ signals:
     void historySelected(const QString &method, const QString &url);
     void saveCurrentRequested(const QString &folderId);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void loadChildren(QTreeWidgetItem *parent);
     void addItem(QTreeWidgetItem *parent, const QString &id, const QString &name,

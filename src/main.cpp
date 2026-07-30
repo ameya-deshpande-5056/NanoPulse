@@ -3,10 +3,12 @@
 #include "ui/mainwindow.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QMessageBox>
 
 int main(int argc, char *argv[]) {
     QApplication application(argc, argv);
+    application.setWindowIcon(QIcon(QStringLiteral(":/app-icon.svg")));
     QApplication::setApplicationName(QStringLiteral("NanoPulse"));
     QApplication::setOrganizationName(QStringLiteral("NanoPulse"));
     QApplication::setApplicationVersion(QString::fromLatin1(NANOPULSE_VERSION));

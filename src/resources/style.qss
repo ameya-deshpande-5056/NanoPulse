@@ -5,6 +5,13 @@ QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QTableWidget, QTreeWidget, QList
 QPushButton { background: #3c4043; border: 1px solid #5f6368; padding: 5px 12px; }
 QPushButton:hover { background: #4b4f52; }
 QPushButton:disabled { color: #80868b; }
+QComboBox[requestMethod="GET"], QLabel[requestMethod="GET"] { color: #81c995; font-weight: 600; }
+QComboBox[requestMethod="POST"], QLabel[requestMethod="POST"] { color: #8ab4f8; font-weight: 600; }
+QComboBox[requestMethod="PUT"], QLabel[requestMethod="PUT"] { color: #fdd663; font-weight: 600; }
+QComboBox[requestMethod="PATCH"], QLabel[requestMethod="PATCH"] { color: #d7aefb; font-weight: 600; }
+QComboBox[requestMethod="DELETE"], QLabel[requestMethod="DELETE"] { color: #f28b82; font-weight: 600; }
+QComboBox[requestMethod="HEAD"], QLabel[requestMethod="HEAD"] { color: #bdc1c6; font-weight: 600; }
+QComboBox[requestMethod="OPTIONS"], QLabel[requestMethod="OPTIONS"] { color: #c58af9; font-weight: 600; }
 QTabWidget::pane { border: 1px solid #5f6368; }
 QTabBar::tab { background: #292a2d; padding: 6px 12px; }
 QTabBar::tab:selected { background: #3c4043; }
