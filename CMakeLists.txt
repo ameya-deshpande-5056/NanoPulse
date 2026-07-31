@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(NanoPulse
-    VERSION 0.0.5
+    VERSION 0.0.6
     DESCRIPTION "Lightweight API Testing Desktop Application"
     LANGUAGES CXX
 )
@@ -35,8 +35,16 @@ qt_add_executable(NanoPulse
     src/storage/sqlite_manager.h src/storage/sqlite_manager.cpp
     src/storage/settings_manager.h src/storage/settings_manager.cpp
     src/import/swagger_importer.h src/import/swagger_importer.cpp
+    src/import/postman_importer.h src/import/postman_importer.cpp
+    src/import/postman_exporter.h src/import/postman_exporter.cpp
+    src/import/curl_importer.h src/import/curl_importer.cpp
+    src/import/http_file_importer.h src/import/http_file_importer.cpp
+    src/import/har_importer.h src/import/har_importer.cpp
+    src/import/external_collection_importer.h src/import/external_collection_importer.cpp
+    src/import/bruno_importer.h src/import/bruno_importer.cpp
     src/utils/json_helper.h src/utils/json_helper.cpp
     src/utils/source_formatter.h src/utils/source_formatter.cpp
+    src/utils/simple_yaml.h src/utils/simple_yaml.cpp
     src/utils/variable_substitution.h src/utils/variable_substitution.cpp
     src/resources/application.qrc
 )

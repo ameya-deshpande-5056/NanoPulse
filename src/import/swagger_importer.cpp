@@ -2,6 +2,7 @@
 
 #include "../network/request.h"
 #include "../storage/sqlite_manager.h"
+#include "../utils/simple_yaml.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -378,12 +379,16 @@ SwaggerDocument SwaggerImporter::parseFile(const QString &filePath) {
 SwaggerDocument SwaggerImporter::parse(const QByteArray &data,
                                        const QString &sourceName) {
     QJsonParseError parseError;
-    const auto parsed = QJsonDocument::fromJson(data, &parseError);
-    if (parseError.error != QJsonParseError::NoError)
-        return {{}, {}, {}, parseError.errorString()};
+    auto parsed = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError) {
+        QString yamlError;
+        parsed = SimpleYaml::parse(data, &yamlError);
+        if (parsed.isNull())
+            return {{}, {}, {}, yamlError.isEmpty() ? parseError.errorString() : yamlError};
+    }
     if (!parsed.isObject())
         return {{}, {}, {},
-                QStringLiteral("The document root must be a JSON object")};
+                QStringLiteral("The document root must be an object")};
 
     const auto root = parsed.object();
     if (!root.contains(QStringLiteral("swagger"))

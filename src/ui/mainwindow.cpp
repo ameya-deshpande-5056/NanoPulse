@@ -6,6 +6,13 @@
 #include "request_panel.h"
 #include "response_viewer.h"
 #include "../import/swagger_importer.h"
+#include "../import/postman_importer.h"
+#include "../import/postman_exporter.h"
+#include "../import/curl_importer.h"
+#include "../import/http_file_importer.h"
+#include "../import/har_importer.h"
+#include "../import/external_collection_importer.h"
+#include "../import/bruno_importer.h"
 #include "../network/api_client.h"
 #include "../storage/settings_manager.h"
 #include "../storage/sqlite_manager.h"
@@ -94,7 +101,11 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
     auto *importUrlAction =
         fileMenu->addAction(tr("Import Swagger/OpenAPI from URL..."));
     auto *importCollectionsAction = fileMenu->addAction(tr("Import Collections…"));
+    auto *importCurlAction = fileMenu->addAction(tr("Import cURL…"));
+    auto *importHttpAction = fileMenu->addAction(tr("Import HTTP Request File…"));
+    auto *importBrunoAction = fileMenu->addAction(tr("Import Bruno Collection Directory…"));
     auto *exportCollectionsAction = fileMenu->addAction(tr("Export Collections…"));
+    auto *exportPostmanAction = fileMenu->addAction(tr("Export Postman Collection v2.1…"));
     auto *saveAction = fileMenu->addAction(tr("Save Request…"));
     saveAction->setShortcut(QKeySequence::Save);
     auto *curlAction = fileMenu->addAction(tr("Copy as cURL"));
@@ -162,8 +173,14 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
             this, &MainWindow::importSwaggerFromUrl);
     connect(importCollectionsAction, &QAction::triggered,
             this, &MainWindow::importCollections);
+    connect(importCurlAction, &QAction::triggered, this, &MainWindow::importCurl);
+    connect(importHttpAction, &QAction::triggered, this, &MainWindow::importHttpFile);
+    connect(importBrunoAction, &QAction::triggered,
+            this, &MainWindow::importBrunoCollection);
     connect(exportCollectionsAction, &QAction::triggered,
             this, &MainWindow::exportCollections);
+    connect(exportPostmanAction, &QAction::triggered,
+            this, &MainWindow::exportPostmanCollection);
     connect(saveAction, &QAction::triggered, this, [this] { saveRequest(); });
     connect(curlAction, &QAction::triggered, this, &MainWindow::exportCurl);
     connect(saveResponseAction, &QAction::triggered,
@@ -550,7 +567,8 @@ QMap<QString, QString> MainWindow::activeVariables() const {
 
 void MainWindow::importSwagger() {
     const auto path = QFileDialog::getOpenFileName(
-        this, tr("Import Swagger/OpenAPI"), {}, tr("JSON files (*.json)"));
+        this, tr("Import Swagger/OpenAPI"), {},
+        tr("OpenAPI and Swagger (*.json *.yaml *.yml);;All files (*)"));
     if (path.isEmpty())
         return;
     importSwaggerDocument(SwaggerImporter::parseFile(path), true);
@@ -697,7 +715,8 @@ bool MainWindow::promptForBaseUrl(QString &baseUrl) {
 
 void MainWindow::importCollections() {
     const auto path = QFileDialog::getOpenFileName(
-        this, tr("Import Collections"), {}, tr("JSON files (*.json)"));
+        this, tr("Import Collections"), {},
+        tr("REST collections (*.json *.har *.hoppscotch *.insomnia);;All files (*)"));
     if (path.isEmpty())
         return;
     QFile file(path);
@@ -707,13 +726,94 @@ void MainWindow::importCollections() {
     }
     QJsonParseError error;
     const auto document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isArray()) {
+    if (error.error != QJsonParseError::NoError || (!document.isArray() && !document.isObject())) {
         QMessageBox::critical(this, tr("Import failed"), error.errorString());
         return;
     }
-    const int count = m_storage->importCollections(document.array());
+    int count = 0;
+    if (document.isArray()) {
+        count = m_storage->importCollections(document.array());
+    } else if (PostmanImporter::isCollection(document.object())) {
+        const auto result = PostmanImporter::importCollection(document.object(), *m_storage);
+        if (!result.error.isEmpty()) {
+            QMessageBox::critical(this, tr("Import failed"), result.error);
+            return;
+        }
+        count = result.requestCount;
+    } else if (HarImporter::isHar(document.object())) {
+        const auto result = HarImporter::importArchive(
+            document.object(), QFileInfo(path).completeBaseName(), *m_storage);
+        if (!result.error.isEmpty()) {
+            QMessageBox::critical(this, tr("Import failed"), result.error);
+            return;
+        }
+        count = result.requestCount;
+    } else if (ExternalCollectionImporter::recognizes(document.object())) {
+        const auto result = ExternalCollectionImporter::importCollection(
+            document.object(), QFileInfo(path).completeBaseName(), *m_storage);
+        if (!result.error.isEmpty()) {
+            QMessageBox::critical(this, tr("Import failed"), result.error);
+            return;
+        }
+        count = result.requestCount;
+    } else {
+        QMessageBox::critical(this, tr("Import failed"),
+                              tr("Choose a NanoPulse, Postman, Insomnia, Hoppscotch, Thunder Client, or HAR collection."));
+        return;
+    }
     m_sidebar->refresh();
     statusBar()->showMessage(tr("Imported %1 collection items").arg(count), 5000);
+}
+
+void MainWindow::importCurl() {
+    bool accepted = false;
+    const auto command = QInputDialog::getMultiLineText(this, tr("Import cURL"),
+                                                          tr("Paste cURL command:"), {}, &accepted);
+    if (!accepted || command.trimmed().isEmpty())
+        return;
+    QString error;
+    const auto request = CurlImporter::parse(command, &error);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, tr("Import cURL"), error);
+        return;
+    }
+    addRequestTab(request);
+}
+
+void MainWindow::importHttpFile() {
+    const auto path = QFileDialog::getOpenFileName(
+        this, tr("Import HTTP Request File"), {},
+        tr("HTTP request files (*.http *.rest);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::critical(this, tr("Import failed"), file.errorString());
+        return;
+    }
+    QString error;
+    const auto requests = HttpFileImporter::parse(QString::fromUtf8(file.readAll()), &error);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, tr("Import failed"), error);
+        return;
+    }
+    for (const auto &request : requests)
+        addRequestTab(request);
+    statusBar()->showMessage(tr("Imported %1 requests").arg(requests.size()), 5000);
+}
+
+void MainWindow::importBrunoCollection() {
+    const auto path = QFileDialog::getExistingDirectory(
+        this, tr("Import Bruno Collection Directory"));
+    if (path.isEmpty())
+        return;
+    const auto result = BrunoImporter::importDirectory(path, *m_storage);
+    if (!result.error.isEmpty()) {
+        QMessageBox::critical(this, tr("Import failed"), result.error);
+        return;
+    }
+    m_sidebar->refresh();
+    statusBar()->showMessage(tr("Imported %1 Bruno requests").arg(result.requestCount), 5000);
 }
 
 void MainWindow::exportCollections() {
@@ -728,6 +828,28 @@ void MainWindow::exportCollections() {
         return;
     }
     file.write(QJsonDocument(m_storage->exportCollections())
+                   .toJson(QJsonDocument::Indented));
+}
+
+void MainWindow::exportPostmanCollection() {
+    bool accepted = false;
+    const auto name = QInputDialog::getText(this, tr("Export Postman Collection"),
+                                            tr("Collection name:"), QLineEdit::Normal,
+                                            tr("NanoPulse Collection"), &accepted);
+    if (!accepted || name.trimmed().isEmpty())
+        return;
+    const auto path = QFileDialog::getSaveFileName(
+        this, tr("Export Postman Collection"), QStringLiteral("nanopulse.postman_collection.json"),
+        tr("Postman Collection (*.postman_collection.json);;JSON files (*.json)"));
+    if (path.isEmpty())
+        return;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QMessageBox::critical(this, tr("Export failed"), file.errorString());
+        return;
+    }
+    file.write(QJsonDocument(PostmanExporter::collection(m_storage->exportCollections(),
+                                                           name.trimmed()))
                    .toJson(QJsonDocument::Indented));
 }
 

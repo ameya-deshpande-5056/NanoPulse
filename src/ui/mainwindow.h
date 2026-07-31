@@ -67,7 +67,11 @@ private:
                                bool alwaysPromptForBaseUrl);
     bool promptForBaseUrl(QString &baseUrl);
     void importCollections();
+    void importCurl();
+    void importHttpFile();
+    void importBrunoCollection();
     void exportCollections();
+    void exportPostmanCollection();
     void saveResponse();
     void exportCurl();
     void applyTheme(bool dark);

@@ -150,6 +150,20 @@ void EnvironmentManager::importJson() {
     if (!file.open(QIODevice::ReadOnly))
         return;
     const auto object = QJsonDocument::fromJson(file.readAll()).object();
+    if (object.value(QStringLiteral("values")).isArray()
+        && !object.value(QStringLiteral("name")).toString().isEmpty()) {
+        QMap<QString, QString> variables;
+        for (const auto &entryValue : object.value(QStringLiteral("values")).toArray()) {
+            const auto entry = entryValue.toObject();
+            if (entry.value(QStringLiteral("enabled")).toBool(true))
+                variables.insert(entry.value(QStringLiteral("key")).toString(),
+                                 entry.value(QStringLiteral("value")).toVariant().toString());
+        }
+        m_storage->saveEnvironment(object.value(QStringLiteral("name")).toString(), variables);
+        reload();
+        emit environmentsChanged();
+        return;
+    }
     for (auto environment = object.begin(); environment != object.end();
          ++environment) {
         QMap<QString, QString> variables;

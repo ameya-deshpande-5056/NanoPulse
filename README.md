@@ -8,7 +8,13 @@ Lightweight offline REST client for Windows and Linux, built with C++17 and Qt 6
 - Create raw JSON, XML, HTML, JavaScript, and text bodies, URL-encoded forms, multipart forms with file uploads, or binary-file bodies.
 - Configure redirects, TLS verification, HTTP/SOCKS5 proxies, PEM client certificates, and per-session cookies.
 - Organize requests in collections, reuse `{{variables}}` from environments, inspect request history, and work in multiple request tabs.
-- Import Swagger/OpenAPI definitions from a file or URL, import/export collections and environments, save responses, and copy requests as cURL commands.
+- Import Swagger/OpenAPI JSON or YAML from a file or URL, and open cURL or
+  `.http`/`.rest` requests directly in request tabs.
+- Exchange collections through NanoPulse JSON or Postman v2.1; import Insomnia,
+  Hoppscotch, Thunder Client, Bruno directories, and HAR archives; import
+  Postman environments or import/export NanoPulse environments.
+- Save responses, copy requests as cURL commands, and export collections as
+  NanoPulse JSON or Postman v2.1.
 - Inspect streamed response bodies and headers with search, formatting, syntax highlighting, and light/dark themes.
 
 ## Run the current source
