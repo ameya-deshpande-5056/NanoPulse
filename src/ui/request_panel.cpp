@@ -1,6 +1,8 @@
 #include "request_panel.h"
 #include "text_search_bar.h"
 
+#include "../utils/source_formatter.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -76,6 +78,8 @@ RequestPanel::RequestPanel(QWidget *parent) : QWidget(parent) {
     auto *bodyLayout = new QVBoxLayout(bodyPage);
     m_bodyType = new QComboBox(bodyPage);
     m_bodyType->addItems({tr("JSON"), tr("XML"), tr("Text")});
+    m_pretty = new QCheckBox(tr("Pretty"), bodyPage);
+    m_pretty->setToolTip(tr("Show a formatted preview without changing the payload sent"));
     m_body = new QPlainTextEdit(bodyPage);
     m_body->setPlaceholderText(tr("Request body"));
     m_body->setLineWrapMode(QPlainTextEdit::NoWrap);
@@ -84,6 +88,7 @@ RequestPanel::RequestPanel(QWidget *parent) : QWidget(parent) {
     auto *wrap = new QCheckBox(tr("Wrap"), bodyPage);
     auto *find = new QPushButton(tr("Find"), bodyPage);
     bodyControls->addWidget(m_bodyType);
+    bodyControls->addWidget(m_pretty);
     bodyControls->addStretch();
     bodyControls->addWidget(find);
     bodyControls->addWidget(wrap);
@@ -96,6 +101,19 @@ RequestPanel::RequestPanel(QWidget *parent) : QWidget(parent) {
     });
     connect(find, &QPushButton::clicked, search,
             [search] { search->showFind(); });
+    connect(m_body, &QPlainTextEdit::textChanged, this, [this] {
+        if (!m_updatingBody && !m_pretty->isChecked())
+            m_rawBody = m_body->toPlainText();
+    });
+    connect(m_pretty, &QCheckBox::toggled, this,
+            [this] { updateBodyView(); });
+    connect(m_bodyType, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (index == 2 && m_pretty->isChecked())
+            m_pretty->setChecked(false);
+        m_pretty->setEnabled(index != 2);
+        if (m_pretty->isChecked())
+            updateBodyView();
+    });
 
     auto *authPage = new QWidget(tabs);
     auto *authLayout = new QFormLayout(authPage);
@@ -118,6 +136,21 @@ RequestPanel::RequestPanel(QWidget *parent) : QWidget(parent) {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(tabs);
+}
+
+void RequestPanel::updateBodyView() {
+    m_updatingBody = true;
+    if (m_pretty->isChecked()) {
+        const auto language = m_bodyType->currentIndex() == 0
+            ? SourceFormatter::Language::Json
+            : SourceFormatter::Language::Xml;
+        m_body->setPlainText(SourceFormatter::pretty(m_rawBody, language));
+        m_body->setReadOnly(true);
+    } else {
+        m_body->setReadOnly(false);
+        m_body->setPlainText(m_rawBody);
+    }
+    m_updatingBody = false;
 }
 
 QList<QPair<QString, QString>>
@@ -147,7 +180,7 @@ ApiRequest RequestPanel::request() const {
     ApiRequest result;
     result.params = tablePairs(m_params);
     result.headers = tablePairs(m_headers);
-    result.body = m_body->toPlainText().toUtf8();
+    result.body = m_rawBody.toUtf8();
     const auto auth = m_authType->currentIndex();
     if (auth == 1) {
         result.headers.append(
@@ -185,7 +218,19 @@ ApiRequest RequestPanel::request() const {
 void RequestPanel::setRequest(const ApiRequest &request) {
     setTablePairs(m_params, request.params);
     setTablePairs(m_headers, request.headers);
-    m_body->setPlainText(QString::fromUtf8(request.body));
+    int bodyType = 0;
+    for (const auto &header : request.headers) {
+        if (header.first.compare(QStringLiteral("Content-Type"),
+                                 Qt::CaseInsensitive) != 0)
+            continue;
+        const auto contentType = header.second.toLower();
+        bodyType = contentType.contains(QStringLiteral("xml"))
+            ? 1 : contentType.contains(QStringLiteral("json")) ? 0 : 2;
+        break;
+    }
+    m_bodyType->setCurrentIndex(bodyType);
+    m_rawBody = QString::fromUtf8(request.body);
+    updateBodyView();
     m_authType->setCurrentIndex(0);
     m_authKey->clear();
     m_authValue->clear();

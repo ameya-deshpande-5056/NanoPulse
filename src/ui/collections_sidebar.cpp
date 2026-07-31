@@ -1,4 +1,5 @@
 #include "collections_sidebar.h"
+#include "request_method_colors.h"
 
 #include "../storage/sqlite_manager.h"
 
@@ -34,6 +35,7 @@ CollectionsSidebar::CollectionsSidebar(SqliteManager *storage, QWidget *parent)
     m_tree->viewport()->installEventFilter(this);
     m_history = new QComboBox(this);
     m_history->setPlaceholderText(tr("Recent requests"));
+    RequestMethodColors::installDelegate(m_history);
     m_history->installEventFilter(this);
     m_history->view()->viewport()->installEventFilter(this);
     auto *clearHistory = new QPushButton(tr("Clear history"), this);
@@ -98,12 +100,22 @@ void CollectionsSidebar::refreshHistory() {
         m_history->setItemData(index, item.method, Qt::UserRole);
         m_history->setItemData(index, item.url, Qt::UserRole + 1);
     }
+    RequestMethodColors::apply(m_history, m_darkTheme, Qt::UserRole);
     if (m_history->count() > 0) {
         m_history->setProperty(
             "requestMethod", m_history->itemData(0, Qt::UserRole));
-        m_history->style()->unpolish(m_history);
-        m_history->style()->polish(m_history);
+    } else {
+        m_history->setProperty("requestMethod", QVariant());
     }
+    m_history->style()->unpolish(m_history);
+    m_history->style()->polish(m_history);
+}
+
+void CollectionsSidebar::applyTheme(bool dark) {
+    m_darkTheme = dark;
+    RequestMethodColors::apply(m_history, dark, Qt::UserRole);
+    m_history->style()->unpolish(m_history);
+    m_history->style()->polish(m_history);
 }
 
 bool CollectionsSidebar::eventFilter(QObject *watched, QEvent *event) {

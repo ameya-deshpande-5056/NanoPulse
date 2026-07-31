@@ -6,9 +6,11 @@
 #include <QWidget>
 
 class QLabel;
+class QCheckBox;
 class QLineEdit;
 class QPlainTextEdit;
 class QTableWidget;
+class ResponseSyntaxHighlighter;
 
 class ResponseViewer : public QWidget {
     Q_OBJECT
@@ -26,6 +28,7 @@ signals:
 
 private:
     void filterHeaders(const QString &text);
+    void updateBodyView();
 
     QLabel *m_status;
     QLabel *m_time;
@@ -36,6 +39,10 @@ private:
     QLineEdit *m_headerSearch;
     QLineEdit *m_expectedStatus;
     QLineEdit *m_maxTime;
+    QCheckBox *m_pretty;
+    ResponseSyntaxHighlighter *m_syntaxHighlighter;
+    QString m_rawBody;
+    QString m_prettyBody;
     QByteArray m_data;
     bool m_streamingLarge = false;
 };

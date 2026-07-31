@@ -14,6 +14,7 @@ public:
     explicit CollectionsSidebar(SqliteManager *storage, QWidget *parent = nullptr);
     void refresh();
     void refreshHistory();
+    void applyTheme(bool dark);
 
 signals:
     void requestSelected(const QString &id);
@@ -34,4 +35,5 @@ private:
     QLineEdit *m_search;
     QTreeWidget *m_tree;
     QComboBox *m_history;
+    bool m_darkTheme = true;
 };

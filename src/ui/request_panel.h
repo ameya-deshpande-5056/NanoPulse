@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class QComboBox;
+class QCheckBox;
 class QLineEdit;
 class QPlainTextEdit;
 class QTableWidget;
@@ -17,6 +18,7 @@ public:
     void setRequest(const ApiRequest &request);
 
 private:
+    void updateBodyView();
     static QList<QPair<QString, QString>> tablePairs(const QTableWidget *table);
     static void setTablePairs(QTableWidget *table,
                               const QList<QPair<QString, QString>> &pairs);
@@ -25,8 +27,11 @@ private:
     QTableWidget *m_headers;
     QPlainTextEdit *m_body;
     QComboBox *m_bodyType;
+    QCheckBox *m_pretty;
     QComboBox *m_authType;
     QLineEdit *m_authKey;
     QLineEdit *m_authValue;
     QLineEdit *m_authExtra;
+    QString m_rawBody;
+    bool m_updatingBody = false;
 };

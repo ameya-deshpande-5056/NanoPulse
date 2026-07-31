@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(NanoPulse
-    VERSION 0.0.3
+    VERSION 0.0.4
     DESCRIPTION "Lightweight API Testing Desktop Application"
     LANGUAGES CXX
 )
@@ -24,6 +24,7 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Sql Widgets)
 qt_add_executable(NanoPulse
     src/main.cpp
     src/ui/mainwindow.h src/ui/mainwindow.cpp
+    src/ui/request_method_colors.h src/ui/request_method_colors.cpp
     src/ui/request_panel.h src/ui/request_panel.cpp
     src/ui/response_viewer.h src/ui/response_viewer.cpp
     src/ui/text_search_bar.h src/ui/text_search_bar.cpp
@@ -35,6 +36,7 @@ qt_add_executable(NanoPulse
     src/storage/settings_manager.h src/storage/settings_manager.cpp
     src/import/swagger_importer.h src/import/swagger_importer.cpp
     src/utils/json_helper.h src/utils/json_helper.cpp
+    src/utils/source_formatter.h src/utils/source_formatter.cpp
     src/utils/variable_substitution.h src/utils/variable_substitution.cpp
     src/resources/application.qrc
 )
