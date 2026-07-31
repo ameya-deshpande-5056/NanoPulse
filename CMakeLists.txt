@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(NanoPulse
-    VERSION 0.0.4
+    VERSION 0.0.5
     DESCRIPTION "Lightweight API Testing Desktop Application"
     LANGUAGES CXX
 )

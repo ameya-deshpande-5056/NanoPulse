@@ -8,6 +8,7 @@ class QComboBox;
 class QCheckBox;
 class QLineEdit;
 class QPlainTextEdit;
+class QStackedWidget;
 class QTableWidget;
 
 class RequestPanel : public QWidget {
@@ -27,6 +28,10 @@ private:
     QTableWidget *m_headers;
     QPlainTextEdit *m_body;
     QComboBox *m_bodyType;
+    QStackedWidget *m_bodyStack;
+    QTableWidget *m_urlEncoded;
+    QTableWidget *m_formData;
+    QLineEdit *m_binaryPath;
     QCheckBox *m_pretty;
     QComboBox *m_authType;
     QLineEdit *m_authKey;

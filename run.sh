@@ -34,6 +34,14 @@ done
     printf 'Error: run.sh supports Linux only.\n' >&2
     exit 1
 }
+if (( EUID == 0 )); then
+    printf '%s\n' 'Error: NanoPulse is a desktop application; run ./run.sh without sudo.' >&2
+    exit 1
+fi
+if [[ -e "${BUILD_DIR}" && ! -w "${BUILD_DIR}" ]]; then
+    BUILD_DIR="${PROJECT_ROOT}/build-run-user"
+    printf '%s\n' "Info: build-run is not writable; using ${BUILD_DIR}." >&2
+fi
 command -v cmake >/dev/null 2>&1 || {
     printf 'Error: CMake is required.\n' >&2
     exit 1
@@ -41,7 +49,7 @@ command -v cmake >/dev/null 2>&1 || {
 
 if (( CLEAN )); then
     case "${BUILD_DIR}" in
-        "${PROJECT_ROOT}/build-run") rm -rf -- "${BUILD_DIR}" ;;
+        "${PROJECT_ROOT}/build-run"|"${PROJECT_ROOT}/build-run-user") rm -rf -- "${BUILD_DIR}" ;;
         *)
             printf 'Error: unsafe build directory %s\n' "${BUILD_DIR}" >&2
             exit 1

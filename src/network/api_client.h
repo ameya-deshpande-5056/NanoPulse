@@ -7,12 +7,17 @@
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
+#include <QUrl>
+
+class QFile;
 
 class ApiClient : public QObject {
     Q_OBJECT
 public:
     explicit ApiClient(QObject *parent = nullptr);
     bool busy() const;
+    QList<QNetworkCookie> cookiesForUrl(const QUrl &url) const;
+    void setCookiesForUrl(const QUrl &url, const QList<QNetworkCookie> &cookies);
 
 public slots:
     void send(const ApiRequest &request);
@@ -29,5 +34,6 @@ private:
     QPointer<QNetworkReply> m_reply;
     QElapsedTimer m_elapsed;
     QTimer m_timeout;
+    QList<QFile *> m_uploadFiles;
     qint64 m_bytes = 0;
 };

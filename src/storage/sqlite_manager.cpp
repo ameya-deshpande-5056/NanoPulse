@@ -30,6 +30,54 @@ QList<QPair<QString, QString>> jsonToPairs(const QString &value) {
     }
     return pairs;
 }
+
+QJsonObject bodyOptionsToJson(const ApiRequest &request) {
+    QJsonObject object;
+    object.insert(QStringLiteral("mode"), static_cast<int>(request.bodyMode));
+    object.insert(QStringLiteral("content_type"), request.bodyContentType);
+    object.insert(QStringLiteral("binary_file"), request.binaryFilePath);
+    object.insert(QStringLiteral("follow_redirects"), request.followRedirects);
+    object.insert(QStringLiteral("verify_tls"), request.verifyTls);
+    object.insert(QStringLiteral("proxy_url"), request.proxyUrl);
+    object.insert(QStringLiteral("client_certificate"), request.clientCertificatePath);
+    object.insert(QStringLiteral("client_private_key"), request.clientPrivateKeyPath);
+    QJsonArray entries;
+    for (const auto &entry : request.bodyEntries) {
+        entries.append(QJsonObject{{QStringLiteral("key"), entry.key},
+                                   {QStringLiteral("value"), entry.value},
+                                   {QStringLiteral("file_path"), entry.filePath},
+                                   {QStringLiteral("content_type"), entry.contentType},
+                                   {QStringLiteral("is_file"), entry.isFile},
+                                   {QStringLiteral("enabled"), entry.enabled}});
+    }
+    object.insert(QStringLiteral("entries"), entries);
+    return object;
+}
+
+void bodyOptionsFromJson(const QString &json, ApiRequest *request) {
+    const auto object = QJsonDocument::fromJson(json.toUtf8()).object();
+    if (object.isEmpty())
+        return;
+    request->bodyMode = static_cast<RequestBodyMode>(object.value(QStringLiteral("mode")).toInt());
+    request->bodyContentType = object.value(QStringLiteral("content_type")).toString();
+    request->binaryFilePath = object.value(QStringLiteral("binary_file")).toString();
+    request->followRedirects = object.value(QStringLiteral("follow_redirects")).toBool(true);
+    request->verifyTls = object.value(QStringLiteral("verify_tls")).toBool(true);
+    request->proxyUrl = object.value(QStringLiteral("proxy_url")).toString();
+    request->clientCertificatePath = object.value(QStringLiteral("client_certificate")).toString();
+    request->clientPrivateKeyPath = object.value(QStringLiteral("client_private_key")).toString();
+    for (const auto &value : object.value(QStringLiteral("entries")).toArray()) {
+        const auto entryObject = value.toObject();
+        RequestBodyEntry entry;
+        entry.key = entryObject.value(QStringLiteral("key")).toString();
+        entry.value = entryObject.value(QStringLiteral("value")).toString();
+        entry.filePath = entryObject.value(QStringLiteral("file_path")).toString();
+        entry.contentType = entryObject.value(QStringLiteral("content_type")).toString();
+        entry.isFile = entryObject.value(QStringLiteral("is_file")).toBool();
+        entry.enabled = entryObject.value(QStringLiteral("enabled")).toBool(true);
+        request->bodyEntries.append(entry);
+    }
+}
 }
 
 SqliteManager::SqliteManager()
@@ -83,6 +131,11 @@ bool SqliteManager::initialize() {
             return false;
         }
     }
+    // Existing local databases predate structured request body storage. SQLite's
+    // ADD COLUMN is non-destructive; a duplicate-column error simply means the
+    // database has already been migrated.
+    QSqlQuery migration(m_database);
+    migration.exec(QStringLiteral("ALTER TABLE collections ADD COLUMN body_options TEXT"));
     return true;
 }
 
@@ -117,7 +170,7 @@ bool SqliteManager::saveRequest(const QString &name, const ApiRequest &request,
     QSqlQuery query(m_database);
     query.prepare(QStringLiteral(
         "INSERT INTO collections(id,name,method,url,headers,params,body,auth_type,"
-        "folder_id,created_at,is_folder) VALUES(?,?,?,?,?,?,?,?,?,?,0)"));
+        "folder_id,created_at,is_folder,body_options) VALUES(?,?,?,?,?,?,?,?,?,?,0,?)"));
     query.addBindValue(QUuid::createUuid().toString(QUuid::WithoutBraces));
     query.addBindValue(name);
     query.addBindValue(request.method);
@@ -130,6 +183,8 @@ bool SqliteManager::saveRequest(const QString &name, const ApiRequest &request,
     query.addBindValue(QStringLiteral("none"));
     query.addBindValue(folderId);
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    query.addBindValue(QString::fromUtf8(
+        QJsonDocument(bodyOptionsToJson(request)).toJson(QJsonDocument::Compact)));
     return query.exec();
 }
 
@@ -187,7 +242,7 @@ ApiRequest SqliteManager::request(const QString &id) const {
     ApiRequest result;
     QSqlQuery query(m_database);
     query.prepare(QStringLiteral(
-        "SELECT method,url,headers,params,body FROM collections WHERE id=? AND is_folder=0"));
+        "SELECT method,url,headers,params,body,body_options FROM collections WHERE id=? AND is_folder=0"));
     query.addBindValue(id);
     if (query.exec() && query.next()) {
         result.method = query.value(0).toString();
@@ -195,6 +250,7 @@ ApiRequest SqliteManager::request(const QString &id) const {
         result.headers = jsonToPairs(query.value(2).toString());
         result.params = jsonToPairs(query.value(3).toString());
         result.body = query.value(4).toString().toUtf8();
+        bodyOptionsFromJson(query.value(5).toString(), &result);
     }
     return result;
 }
@@ -281,7 +337,7 @@ QJsonArray SqliteManager::exportCollections() const {
     QJsonArray result;
     QSqlQuery query(QStringLiteral(
         "SELECT id,name,method,url,headers,params,body,auth_type,folder_id,"
-        "created_at,is_folder FROM collections ORDER BY created_at"), m_database);
+        "created_at,is_folder,body_options FROM collections ORDER BY created_at"), m_database);
     while (query.next()) {
         QJsonObject item;
         item.insert(QStringLiteral("id"), query.value(0).toString());
@@ -297,6 +353,8 @@ QJsonArray SqliteManager::exportCollections() const {
         item.insert(QStringLiteral("folder_id"), query.value(8).toString());
         item.insert(QStringLiteral("created_at"), query.value(9).toString());
         item.insert(QStringLiteral("is_folder"), query.value(10).toBool());
+        item.insert(QStringLiteral("body_options"),
+                    QJsonDocument::fromJson(query.value(11).toByteArray()).object());
         result.append(item);
     }
     return result;
@@ -320,7 +378,7 @@ int SqliteManager::importCollections(const QJsonArray &items) {
         QSqlQuery query(m_database);
         query.prepare(QStringLiteral(
             "INSERT INTO collections(id,name,method,url,headers,params,body,"
-            "auth_type,folder_id,created_at,is_folder) VALUES(?,?,?,?,?,?,?,?,?,?,?)"));
+            "auth_type,folder_id,created_at,is_folder,body_options) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"));
         query.addBindValue(ids.value(oldId));
         query.addBindValue(item.value(QStringLiteral("name")).toString());
         query.addBindValue(item.value(QStringLiteral("method")).toString());
@@ -340,6 +398,9 @@ int SqliteManager::importCollections(const QJsonArray &items) {
                                .toString(QDateTime::currentDateTimeUtc()
                                              .toString(Qt::ISODateWithMs)));
         query.addBindValue(item.value(QStringLiteral("is_folder")).toBool());
+        query.addBindValue(QString::fromUtf8(QJsonDocument(
+            item.value(QStringLiteral("body_options")).toObject())
+                                               .toJson(QJsonDocument::Compact)));
         if (query.exec())
             ++count;
     }

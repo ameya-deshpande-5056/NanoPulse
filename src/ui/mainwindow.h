@@ -39,6 +39,11 @@ private:
         QSpinBox *timeout;
         QPushButton *send;
         QPushButton *cancel;
+        bool followRedirects = true;
+        bool verifyTls = true;
+        QString proxyUrl;
+        QString clientCertificatePath;
+        QString clientPrivateKeyPath;
         RequestPanel *requestPanel;
         ResponseViewer *responseViewer;
     };
@@ -49,6 +54,8 @@ private:
     void closeRequestTab(int index);
     void updateRequestTabTitle(QWidget *page);
     void sendRequest();
+    void configureRequestSettings(RequestTab *tab);
+    void manageCookies();
     void saveRequest(const QString &folderId = {});
     void loadRequest(const QString &id);
     void loadEnvironments();

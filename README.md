@@ -2,6 +2,32 @@
 
 Lightweight offline REST client for Windows and Linux, built with C++17 and Qt 6 Widgets.
 
+## Features
+
+- Send standard or custom HTTP methods with query parameters, headers, Basic/Bearer/API-key authentication, and configurable timeouts.
+- Create raw JSON, XML, HTML, JavaScript, and text bodies, URL-encoded forms, multipart forms with file uploads, or binary-file bodies.
+- Configure redirects, TLS verification, HTTP/SOCKS5 proxies, PEM client certificates, and per-session cookies.
+- Organize requests in collections, reuse `{{variables}}` from environments, inspect request history, and work in multiple request tabs.
+- Import Swagger/OpenAPI definitions from a file or URL, import/export collections and environments, save responses, and copy requests as cURL commands.
+- Inspect streamed response bodies and headers with search, formatting, syntax highlighting, and light/dark themes.
+
+## Run the current source
+
+On Linux:
+
+```bash
+./run.sh
+```
+
+On Windows:
+
+```bat
+run.bat
+```
+
+Both launchers accept `--clean` and `--build-only`. Run the Linux launcher as a
+regular desktop user, without `sudo`.
+
 ## Build
 
 Requirements: Qt 6.4+ with Core, Gui, Network, Sql, Widgets, and the SQLite driver.

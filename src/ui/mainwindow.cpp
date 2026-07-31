@@ -17,9 +17,14 @@
 #include <QCloseEvent>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDateTime>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QIcon>
@@ -32,6 +37,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QNetworkCookie>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSharedPointer>
@@ -41,6 +47,7 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -96,6 +103,7 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
     auto *quitAction = fileMenu->addAction(tr("Quit"));
     auto *toolsMenu = menuBar()->addMenu(tr("&Tools"));
     auto *environmentsAction = toolsMenu->addAction(tr("Manage Environments…"));
+    auto *cookiesAction = toolsMenu->addAction(tr("Manage Cookies for Current Host…"));
     auto *historyLimitAction = toolsMenu->addAction(tr("History Limit…"));
     auto *themeAction = menuBar()->addAction(tr("Light theme"));
     themeAction->setCheckable(true);
@@ -107,6 +115,7 @@ MainWindow::MainWindow(SqliteManager *storage, SettingsManager *settings,
 
     connect(newTab, &QToolButton::clicked, this,
             [this] { addRequestTab(); });
+    connect(cookiesAction, &QAction::triggered, this, &MainWindow::manageCookies);
     connect(m_requestTabs, &QTabWidget::tabCloseRequested,
             this, &MainWindow::closeRequestTab);
     connect(m_client, &ApiClient::started, this, [this] {
@@ -226,6 +235,8 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
                           QStringLiteral("PUT"), QStringLiteral("PATCH"),
                           QStringLiteral("DELETE"), QStringLiteral("HEAD"),
                           QStringLiteral("OPTIONS")});
+    tab.method->setEditable(true);
+    tab.method->lineEdit()->setPlaceholderText(tr("Custom method"));
     RequestMethodColors::installDelegate(tab.method);
     RequestMethodColors::apply(tab.method, true);
     tab.method->setProperty("requestMethod", tab.method->currentText());
@@ -243,6 +254,9 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
     tab.send = new QPushButton(tr("Send"), tab.page);
     tab.cancel = new QPushButton(tr("Cancel"), tab.page);
     tab.cancel->setEnabled(false);
+    auto *requestSettings = new QToolButton(tab.page);
+    requestSettings->setText(tr("Settings"));
+    requestSettings->setToolTip(tr("Request transport settings"));
     tab.requestPanel = new RequestPanel(tab.page);
     tab.responseViewer = new ResponseViewer(tab.page);
 
@@ -252,6 +266,7 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
     topBar->addWidget(new QLabel(tr("Timeout:"), tab.page));
     topBar->addWidget(tab.timeout);
     topBar->addWidget(tab.environment);
+    topBar->addWidget(requestSettings);
     topBar->addWidget(tab.send);
     topBar->addWidget(tab.cancel);
     auto *vertical = new QSplitter(Qt::Vertical, tab.page);
@@ -271,6 +286,15 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
         sendRequest();
     });
     connect(tab.cancel, &QPushButton::clicked, m_client, &ApiClient::cancel);
+    connect(requestSettings, &QToolButton::clicked, this,
+            [this, page = tab.page] {
+                for (auto &candidate : m_requestTabData) {
+                    if (candidate.page == page) {
+                        configureRequestSettings(&candidate);
+                        break;
+                    }
+                }
+            });
     connect(tab.method, &QComboBox::currentTextChanged, this,
             [this, page = tab.page, method = tab.method](const QString &value) {
         method->setProperty("requestMethod", value);
@@ -281,9 +305,16 @@ MainWindow::RequestTab *MainWindow::addRequestTab(const ApiRequest &request) {
     connect(tab.url->lineEdit(), &QLineEdit::textChanged, this,
             [this, page = tab.page] { updateRequestTabTitle(page); });
 
-    tab.method->setCurrentText(request.method.isEmpty() ? QStringLiteral("GET")
-                                                        : request.method);
+    const auto method = request.method.isEmpty() ? QStringLiteral("GET") : request.method;
+    if (tab.method->findText(method) < 0)
+        tab.method->addItem(method);
+    tab.method->setCurrentText(method);
     tab.url->setCurrentText(request.url);
+    tab.followRedirects = request.followRedirects;
+    tab.verifyTls = request.verifyTls;
+    tab.proxyUrl = request.proxyUrl;
+    tab.clientCertificatePath = request.clientCertificatePath;
+    tab.clientPrivateKeyPath = request.clientPrivateKeyPath;
     tab.requestPanel->setRequest(request);
     loadEnvironments();
     updateRequestTabTitle(tab.page);
@@ -362,6 +393,86 @@ void MainWindow::sendRequest() {
     m_client->send(m_lastSent);
 }
 
+void MainWindow::configureRequestSettings(RequestTab *tab) {
+    if (!tab)
+        return;
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Request settings"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout;
+    auto *redirects = new QCheckBox(tr("Follow redirects"), &dialog);
+    redirects->setChecked(tab->followRedirects);
+    auto *verifyTls = new QCheckBox(tr("Verify TLS certificates"), &dialog);
+    verifyTls->setChecked(tab->verifyTls);
+    auto *proxy = new QLineEdit(tab->proxyUrl, &dialog);
+    proxy->setPlaceholderText(tr("System proxy (or http://user:password@host:port)"));
+    auto *certificate = new QLineEdit(tab->clientCertificatePath, &dialog);
+    auto *privateKey = new QLineEdit(tab->clientPrivateKeyPath, &dialog);
+    form->addRow(redirects);
+    form->addRow(verifyTls);
+    form->addRow(tr("Proxy"), proxy);
+    form->addRow(tr("Client certificate (PEM)"), certificate);
+    form->addRow(tr("Private key (RSA PEM)"), privateKey);
+    layout->addLayout(form);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                          &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    tab->followRedirects = redirects->isChecked();
+    tab->verifyTls = verifyTls->isChecked();
+    tab->proxyUrl = proxy->text().trimmed();
+    tab->clientCertificatePath = certificate->text().trimmed();
+    tab->clientPrivateKeyPath = privateKey->text().trimmed();
+}
+
+void MainWindow::manageCookies() {
+    const auto *tab = currentRequestTab();
+    if (!tab)
+        return;
+    const QUrl url(tab->url->currentText());
+    if (!url.isValid() || url.host().isEmpty()) {
+        QMessageBox::warning(this, tr("Cookies"), tr("Enter a valid request URL first."));
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Cookies for %1").arg(url.host()));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *table = new QTableWidget(0, 2, &dialog);
+    table->setHorizontalHeaderLabels({tr("Name"), tr("Value")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    const auto cookies = m_client->cookiesForUrl(url);
+    table->setRowCount(cookies.size() + 1);
+    for (int row = 0; row < cookies.size(); ++row) {
+        table->setItem(row, 0, new QTableWidgetItem(QString::fromUtf8(cookies.at(row).name())));
+        table->setItem(row, 1, new QTableWidgetItem(QString::fromUtf8(cookies.at(row).value())));
+    }
+    layout->addWidget(table);
+    auto *note = new QLabel(tr("Changes are kept locally in this session and sent only to this host."),
+                             &dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                          &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    QList<QNetworkCookie> changed;
+    for (int row = 0; row < table->rowCount(); ++row) {
+        const auto *name = table->item(row, 0);
+        const auto *value = table->item(row, 1);
+        if (name && !name->text().trimmed().isEmpty())
+            changed.append(QNetworkCookie(name->text().trimmed().toUtf8(),
+                                          value ? value->text().toUtf8() : QByteArray()));
+    }
+    m_client->setCookiesForUrl(url, changed);
+}
+
 ApiRequest MainWindow::currentRequest(bool substitute) const {
     const auto *tab = currentRequestTab();
     if (!tab)
@@ -370,6 +481,11 @@ ApiRequest MainWindow::currentRequest(bool substitute) const {
     request.method = tab->method->currentText();
     request.url = tab->url->currentText();
     request.timeoutMs = tab->timeout->value() * 1000;
+    request.followRedirects = tab->followRedirects;
+    request.verifyTls = tab->verifyTls;
+    request.proxyUrl = tab->proxyUrl;
+    request.clientCertificatePath = tab->clientCertificatePath;
+    request.clientPrivateKeyPath = tab->clientPrivateKeyPath;
     if (!substitute)
         return request;
     const auto variables = activeVariables();
@@ -384,6 +500,12 @@ ApiRequest MainWindow::currentRequest(bool substitute) const {
     }
     request.body = VariableSubstitution::apply(
                        QString::fromUtf8(request.body), variables).toUtf8();
+    request.binaryFilePath = VariableSubstitution::apply(request.binaryFilePath, variables);
+    for (auto &entry : request.bodyEntries) {
+        entry.key = VariableSubstitution::apply(entry.key, variables);
+        entry.value = VariableSubstitution::apply(entry.value, variables);
+        entry.filePath = VariableSubstitution::apply(entry.filePath, variables);
+    }
     return request;
 }
 
@@ -623,18 +745,36 @@ void MainWindow::saveResponse() {
 
 void MainWindow::exportCurl() {
     const auto request = currentRequest(true);
+    const auto shellQuote = [](QString value) {
+        value.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
+        return QStringLiteral("'%1'").arg(value);
+    };
     QString command = QStringLiteral("curl -X %1").arg(request.method);
     for (const auto &header : request.headers) {
-        auto value = header.second;
-        value.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
-        command += QStringLiteral(" -H '%1: %2'").arg(header.first, value);
+        command += QStringLiteral(" -H %1")
+                       .arg(shellQuote(header.first + QStringLiteral(": ") + header.second));
     }
-    if (!request.body.isEmpty()) {
-        auto body = QString::fromUtf8(request.body);
-        body.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
-        command += QStringLiteral(" --data '%1'").arg(body);
+    if (request.bodyMode == RequestBodyMode::UrlEncoded) {
+        for (const auto &entry : request.bodyEntries)
+            if (entry.enabled && !entry.key.isEmpty())
+                command += QStringLiteral(" --data-urlencode %1")
+                               .arg(shellQuote(entry.key + QLatin1Char('=') + entry.value));
+    } else if (request.bodyMode == RequestBodyMode::Multipart) {
+        for (const auto &entry : request.bodyEntries) {
+            if (!entry.enabled || entry.key.isEmpty())
+                continue;
+            command += QStringLiteral(" -F %1").arg(shellQuote(
+                entry.key + QLatin1Char('=') + (entry.isFile
+                    ? QStringLiteral("@") + entry.filePath : entry.value)));
+        }
+    } else if (request.bodyMode == RequestBodyMode::Binary
+               && !request.binaryFilePath.isEmpty()) {
+        command += QStringLiteral(" --data-binary @%1").arg(shellQuote(request.binaryFilePath));
+    } else if (!request.body.isEmpty()) {
+        command += QStringLiteral(" --data-raw %1")
+                       .arg(shellQuote(QString::fromUtf8(request.body)));
     }
-    command += QStringLiteral(" '%1'").arg(request.resolvedUrl());
+    command += QStringLiteral(" %1").arg(shellQuote(request.resolvedUrl()));
     QApplication::clipboard()->setText(command);
     statusBar()->showMessage(tr("cURL copied"), 3000);
 }
